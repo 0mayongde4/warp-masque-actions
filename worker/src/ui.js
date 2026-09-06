@@ -1,23 +1,5 @@
 // 界面沿用 cfnew 的赛博朋克终端风：青/品红霓虹、等宽字体、扫描线。
-export function renderUI(state, host) {
-  const s = state || {};
-  const warp = s.warp || {};
-  const stat = s.stats || {};
-  const updated = s.updatedAt ? new Date(s.updatedAt) : null;
-  const ago = updated ? Math.floor((Date.now() - updated.getTime()) / 60000) : null;
-  const next = updated ? new Date(updated.getTime() + 4 * 3600 * 1000) : null;
-  const fmt = (d) => d ? d.toISOString().replace("T", " ").slice(0, 19) + " UTC" : "—";
-  const sub = `https://${host}/sub`;
-
-  const row = (k, v, cls = "") =>
-    `<div class="row"><span class="k">${k}</span><span class="v ${cls}">${v}</span></div>`;
-
-  return `<!DOCTYPE html>
-<html lang="zh-CN"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OPERA // MASQUE</title>
-<style>
+const CSS = `
 :root{
   --bg:#05030e; --bg2:#0a0820;
   --cyan:#00f0ff; --pink:#ff2bd6; --purple:#a347ff;
@@ -26,10 +8,11 @@ export function renderUI(state, host) {
   --border:rgba(0,240,255,.55); --grid:rgba(255,43,214,.16);
 }
 *{margin:0;padding:0;box-sizing:border-box}
-html,body{min-height:100%}
 html{overflow-x:hidden}
+html,body{min-height:100%}
 body{
-  font-family:"JetBrains Mono","Fira Code","Courier New",monospace;
+  font-family:"JetBrains Mono","Fira Code","Courier New",
+    "PingFang SC","Microsoft YaHei","Noto Sans SC",monospace;
   background:radial-gradient(ellipse at 20% 10%,#2a0040 0%,var(--bg) 55%,#000 100%);
   color:var(--text);
   padding:32px 16px 56px;
@@ -47,7 +30,6 @@ body::after{
   content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
   background:repeating-linear-gradient(180deg,rgba(0,240,255,.05) 0 1px,transparent 1px 4px);
 }
-.wrap{width:100%;max-width:880px;position:relative;z-index:2;min-width:0}
 .term{
   min-width:0;overflow:hidden;
   border:1px solid var(--border);
@@ -69,6 +51,90 @@ body::after{
 }
 .title::before{content:"// ";color:var(--pink)}
 .body{padding:22px 20px;min-width:0}
+input{
+  background:rgba(0,0,0,.45);
+  border:1px solid var(--border);color:var(--cyan);
+  font-family:inherit;font-size:12px;padding:11px 12px;outline:none;
+  text-shadow:0 0 4px var(--cyan);
+}
+input:focus{border-color:var(--pink);box-shadow:0 0 12px rgba(255,43,214,.4)}
+button{
+  font-family:inherit;font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+  padding:11px 18px;cursor:pointer;
+  background:transparent;border:1px solid var(--pink);color:var(--pink);
+  text-shadow:0 0 6px var(--pink);transition:.15s;white-space:nowrap;
+}
+button:hover{background:var(--pink);color:#05030e;text-shadow:none;box-shadow:0 0 16px var(--pink)}
+button.gh{border-color:var(--cyan);color:var(--cyan);text-shadow:0 0 6px var(--cyan)}
+button.gh:hover{background:var(--cyan);color:#05030e;box-shadow:0 0 16px var(--cyan)}
+button:disabled{opacity:.4;cursor:not-allowed}
+#msg{margin-top:10px;font-size:12px;min-height:18px}
+`;
+
+/** 登录页。密码错时不提示"用户名错误"这类可枚举信息。 */
+export function renderLogin(err) {
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OPERA // MASQUE</title>
+<style>${CSS}
+.wrap{width:100%;max-width:400px;position:relative;z-index:2;min-width:0;align-self:center}
+.f{display:flex;flex-direction:column;gap:12px}
+.hint{font-size:11px;color:var(--dim);line-height:1.8;margin-top:14px}
+</style></head>
+<body><div class="wrap"><div class="term">
+  <div class="head">
+    <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+    <div class="title">Auth Required</div>
+  </div>
+  <div class="body">
+    <form class="f" onsubmit="return go(event)">
+      <input type="password" id="p" placeholder="PASSWORD" autofocus autocomplete="current-password">
+      <button type="submit">进入</button>
+    </form>
+    <div id="msg"></div>
+    <div class="hint">密码由部署者用 wrangler secret 设置。<br>连续失败 8 次会锁定 15 分钟。</div>
+  </div>
+</div></div>
+<script>
+async function go(e){
+  e.preventDefault();
+  const b=document.querySelector('button'), m=document.getElementById('msg');
+  b.disabled=true; m.textContent='> 验证中…'; m.style.color='var(--yellow)';
+  try{
+    const r=await fetch('/login',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({password:document.getElementById('p').value})});
+    const j=await r.json();
+    if(j.ok){m.textContent='> 通过';m.style.color='var(--mint)';location.reload();}
+    else{m.textContent='> '+j.error;m.style.color='var(--red)';b.disabled=false;}
+  }catch(err){m.textContent='> '+err.message;m.style.color='var(--red)';b.disabled=false;}
+  return false;
+}
+</script>
+</body></html>`;
+}
+
+export function renderUI(state, host, sp, token) {
+  const s = state || {};
+  const warp = s.warp || {};
+  const stat = s.stats || {};
+  const updated = s.updatedAt ? new Date(s.updatedAt) : null;
+  const ago = updated ? Math.floor((Date.now() - updated.getTime()) / 60000) : null;
+  const next = updated ? new Date(updated.getTime() + 4 * 3600 * 1000) : null;
+  const fmt = (d) => d ? d.toISOString().replace("T", " ").slice(0, 19) + " UTC" : "—";
+  const sub = `https://${host}${sp}?token=${token}`;
+
+  const row = (k, v, cls = "") =>
+    `<div class="row"><span class="k">${k}</span><span class="v ${cls}">${v}</span></div>`;
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OPERA // MASQUE</title>
+<style>${CSS}
+.wrap{width:100%;max-width:880px;position:relative;z-index:2;min-width:0}
 .sec{margin-bottom:26px;min-width:0}
 .sec:last-child{margin-bottom:0}
 .sec-t{
@@ -86,7 +152,6 @@ body::after{
 .v.ok{color:var(--mint);text-shadow:0 0 6px var(--mint)}
 .v.warn{color:var(--yellow);text-shadow:0 0 6px var(--yellow)}
 .v.err{color:var(--red);text-shadow:0 0 6px var(--red)}
-.v.big{font-size:22px;font-weight:700;color:var(--pink);text-shadow:0 0 10px var(--pink)}
 .grid{display:grid;min-width:0;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
 .cell{
   border:1px solid rgba(0,240,255,.3);padding:12px 14px;
@@ -95,25 +160,8 @@ body::after{
 .cell .n{font-size:26px;font-weight:700;color:var(--cyan);text-shadow:0 0 10px var(--cyan);line-height:1.1}
 .cell .l{font-size:10px;color:var(--dim);letter-spacing:.14em;text-transform:uppercase;margin-top:6px;
   overflow-wrap:anywhere}
-.sub{
-  display:flex;gap:8px;align-items:stretch;margin-top:4px;flex-wrap:wrap;
-}
-.sub input{
-  flex:1;min-width:0;background:rgba(0,0,0,.45);
-  border:1px solid var(--border);color:var(--cyan);
-  font-family:inherit;font-size:12px;padding:11px 12px;outline:none;
-  text-shadow:0 0 4px var(--cyan);
-}
-button{
-  font-family:inherit;font-size:12px;letter-spacing:.12em;text-transform:uppercase;
-  padding:11px 18px;cursor:pointer;
-  background:transparent;border:1px solid var(--pink);color:var(--pink);
-  text-shadow:0 0 6px var(--pink);transition:.15s;white-space:nowrap;
-}
-button:hover{background:var(--pink);color:#05030e;text-shadow:none;box-shadow:0 0 16px var(--pink)}
-button.gh{border-color:var(--cyan);color:var(--cyan);text-shadow:0 0 6px var(--cyan)}
-button.gh:hover{background:var(--cyan);color:#05030e;box-shadow:0 0 16px var(--cyan)}
-button:disabled{opacity:.4;cursor:not-allowed}
+.sub{display:flex;gap:8px;align-items:stretch;margin-top:4px;flex-wrap:wrap}
+.sub input{flex:1;min-width:0}
 .note{font-size:11px;color:var(--dim);line-height:1.85;margin-top:12px;
   overflow-wrap:anywhere;word-break:break-word}
 .note b{color:var(--yellow);font-weight:400}
@@ -123,7 +171,13 @@ button:disabled{opacity:.4;cursor:not-allowed}
 }
 .foot a{color:var(--purple);text-decoration:none}
 .foot a:hover{color:var(--pink)}
-#msg{margin-top:10px;font-size:12px;min-height:18px}
+.head{position:relative}
+.out{
+  margin-left:auto;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--dim);text-decoration:none;border:1px solid rgba(122,169,196,.4);
+  padding:4px 10px;transition:.15s;
+}
+.out:hover{color:var(--red);border-color:var(--red);text-shadow:0 0 6px var(--red)}
 @media(max-width:560px){
   body{padding:18px 10px 40px}
   .row{flex-direction:column;gap:2px;font-size:12px}
@@ -147,6 +201,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
   <div class="head">
     <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
     <div class="title">Opera over MASQUE</div>
+    <a class="out" href="/logout">退出</a>
   </div>
   <div class="body">
 
@@ -155,7 +210,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
       <div class="sub">
         <input id="u" value="${sub}" readonly>
         <button onclick="cp()">复制</button>
-        <button class="gh" onclick="location.href='/sub'">下载</button>
+        <button class="gh" onclick="location.href=document.getElementById('u').value">下载</button>
       </div>
       <div id="msg"></div>
     </div>
@@ -179,6 +234,7 @@ button:disabled{opacity:.4;cursor:not-allowed}
              updated ? (ago > 250 ? "warn" : "ok") : "err")}
       ${row("下次自动更新", fmt(next))}
       ${row("更新周期", "每 4 小时")}
+      ${row("订阅路径", sp)}
       ${row("WARP 设备", warp.deviceId ? warp.deviceId.slice(0, 8) + "…" : "—")}
       ${row("WARP 注册于", warp.registeredAt ? fmt(new Date(warp.registeredAt)) : "—")}
       ${row("内网地址", warp.ipv4 || "—")}
@@ -202,7 +258,8 @@ button:disabled{opacity:.4;cursor:not-allowed}
         必须用 <b>mihomo Alpha</b> 内核，masque 出站和 dialer-proxy 稳定版都不支持。<br>
         可用客户端：Clash Verge Rev（内核切 Alpha）、ClashMi、FlClash。<br>
         Shadowrocket、Stash 不认 dialer-proxy。<br>
-        配置里的 private-key 等同账号凭据，<b>别把订阅链接外传</b>。<br>
+        订阅链接里的 token 就是访问凭证，<b>别外传</b>，泄露了改密码即可全部失效。<br>
+        配置里的 private-key 等同 WARP 账号凭据。<br>
         免费代理的流量对提供方可见，别走支付和敏感数据。
       </div>
     </div>

@@ -271,23 +271,60 @@ npx wrangler login
 # 建 KV，把输出的 id 填进 wrangler.toml
 npx wrangler kv namespace create KV
 
+# 设密码。不设的话 Worker 会直接返回 500 拒绝服务，防止裸奔上线
+npx wrangler secret put PASSWORD
+
 npx wrangler deploy
 ```
 
-部署完访问 `https://你的worker.workers.dev/` 就是状态页，
-订阅地址是同域名下的 `/sub`。
+部署完访问 `https://你的worker.workers.dev/`，输密码进去就能看到订阅地址。
+
+### 订阅路径可以改
+
+`wrangler.toml` 里的 `SUB_PATH` 默认是 `sub`。改成难猜的字符串，
+等于在密码之外多一层保护：
+
+```toml
+[vars]
+SUB_PATH = "a8f3d91c2b"
+```
+
+改完重新 deploy，订阅地址就变成 `https://你的域名/a8f3d91c2b?token=...`。
+
+### 访问控制怎么做的
+
+状态页和所有 API 都要密码。客户端拉订阅时带不了 cookie，所以订阅链接里
+挂了个签名 token——状态页上显示的那条完整链接直接复制走就行。
+
+- 密码只存在 Cloudflare 的 secret 里，不落配置文件
+- 会话是 HMAC 签名的 token，cookie 里没有密码本身
+- 密码比对走常数时间，不会从响应时间里泄露
+- 同一 IP 连续失败 8 次锁 15 分钟
+- 订阅路径不对或 token 无效，一律返回 404，不提示"密码错误"这类可枚举信息
+- 想让所有旧链接失效，改一次密码就够了（token 是用密码签的）
 
 ### 路由
 
 | 路径 | 说明 |
 |---|---|
-| `/` | 状态页 |
-| `/sub` | 订阅，直接填进客户端 |
-| `/api/state` | JSON 格式的状态 |
+| `/` | 状态页，要密码 |
+| `/login` | POST，登录 |
+| `/logout` | 退出 |
+| `SUB_PATH` | 订阅，要 `?token=` |
+| `/api/state` | JSON 状态，要登录 |
 | `/api/refresh` | POST，重新拿 Opera 凭据 |
 | `/api/reset-warp` | POST，重注册 WARP 设备 |
 
-`/sub` 带了 `profile-update-interval: 4`，支持这个头的客户端会自己每 4 小时拉一次。
+订阅响应带了 `profile-update-interval: 4`，支持这个头的客户端会自己每 4 小时拉一次。
+
+### 跑测试
+
+```bash
+cd worker && npm test
+```
+
+33 项，覆盖常数时间比较、token 伪造/篡改/过期、登录限速，
+以及路由层的鉴权（未登录一律 404、订阅 token 校验、cookie 安全属性）。
 
 ### 两个坑
 
