@@ -1,0 +1,15 @@
+name = "opera-masque"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+# getSetCookie() 需要，缺了 Opera 的会话维持不住
+compatibility_flags = ["nodejs_compat"]
+
+# 每 4 小时重建一次配置
+[triggers]
+crons = ["0 */4 * * *"]
+
+# 建好 KV 后把 id 填进来:
+#   npx wrangler kv namespace create KV
+[[kv_namespaces]]
+binding = "KV"
+id = "在这里填你的 KV namespace id"

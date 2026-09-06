@@ -1,0 +1,242 @@
+// 界面沿用 cfnew 的赛博朋克终端风：青/品红霓虹、等宽字体、扫描线。
+export function renderUI(state, host) {
+  const s = state || {};
+  const warp = s.warp || {};
+  const stat = s.stats || {};
+  const updated = s.updatedAt ? new Date(s.updatedAt) : null;
+  const ago = updated ? Math.floor((Date.now() - updated.getTime()) / 60000) : null;
+  const next = updated ? new Date(updated.getTime() + 4 * 3600 * 1000) : null;
+  const fmt = (d) => d ? d.toISOString().replace("T", " ").slice(0, 19) + " UTC" : "—";
+  const sub = `https://${host}/sub`;
+
+  const row = (k, v, cls = "") =>
+    `<div class="row"><span class="k">${k}</span><span class="v ${cls}">${v}</span></div>`;
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OPERA // MASQUE</title>
+<style>
+:root{
+  --bg:#05030e; --bg2:#0a0820;
+  --cyan:#00f0ff; --pink:#ff2bd6; --purple:#a347ff;
+  --yellow:#fff200; --mint:#00ff9d; --red:#ff3860;
+  --text:#e6f5ff; --dim:#7aa9c4;
+  --border:rgba(0,240,255,.55); --grid:rgba(255,43,214,.16);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{min-height:100%}
+html{overflow-x:hidden}
+body{
+  font-family:"JetBrains Mono","Fira Code","Courier New",monospace;
+  background:radial-gradient(ellipse at 20% 10%,#2a0040 0%,var(--bg) 55%,#000 100%);
+  color:var(--text);
+  padding:32px 16px 56px;
+  display:flex;justify-content:center;
+  position:relative;overflow-x:hidden;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    linear-gradient(var(--grid) 1px,transparent 1px) 0 0/44px 44px,
+    linear-gradient(90deg,var(--grid) 1px,transparent 1px) 0 0/44px 44px;
+  opacity:.5;
+}
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
+  background:repeating-linear-gradient(180deg,rgba(0,240,255,.05) 0 1px,transparent 1px 4px);
+}
+.wrap{width:100%;max-width:880px;position:relative;z-index:2;min-width:0}
+.term{
+  min-width:0;overflow:hidden;
+  border:1px solid var(--border);
+  background:rgba(8,4,28,.86);
+  box-shadow:0 0 24px rgba(0,240,255,.14),inset 0 0 60px rgba(163,71,255,.07);
+}
+.head{
+  display:flex;align-items:center;gap:12px;
+  padding:12px 16px;border-bottom:1px solid var(--border);
+  background:linear-gradient(90deg,rgba(255,43,214,.16),rgba(0,240,255,.16));
+}
+.dots{display:flex;gap:8px}
+.dot{width:11px;height:11px;transform:rotate(45deg);background:var(--pink);box-shadow:0 0 8px var(--pink)}
+.dot:nth-child(2){background:var(--yellow);box-shadow:0 0 8px var(--yellow)}
+.dot:nth-child(3){background:var(--mint);box-shadow:0 0 8px var(--mint)}
+.title{
+  color:var(--cyan);font-size:13px;font-weight:700;
+  letter-spacing:.25em;text-transform:uppercase;text-shadow:0 0 6px var(--cyan);
+}
+.title::before{content:"// ";color:var(--pink)}
+.body{padding:22px 20px;min-width:0}
+.sec{margin-bottom:26px;min-width:0}
+.sec:last-child{margin-bottom:0}
+.sec-t{
+  color:var(--pink);font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+  margin-bottom:12px;text-shadow:0 0 6px var(--pink);
+}
+.sec-t::before{content:"▍";color:var(--cyan);margin-right:6px}
+.row{
+  display:flex;justify-content:space-between;align-items:baseline;gap:16px;
+  padding:7px 0;border-bottom:1px dashed rgba(0,240,255,.14);font-size:13px;
+}
+.row:last-child{border-bottom:none}
+.k{color:var(--dim);letter-spacing:.06em;white-space:nowrap}
+.v{color:var(--cyan);text-align:right;word-break:break-all}
+.v.ok{color:var(--mint);text-shadow:0 0 6px var(--mint)}
+.v.warn{color:var(--yellow);text-shadow:0 0 6px var(--yellow)}
+.v.err{color:var(--red);text-shadow:0 0 6px var(--red)}
+.v.big{font-size:22px;font-weight:700;color:var(--pink);text-shadow:0 0 10px var(--pink)}
+.grid{display:grid;min-width:0;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+.cell{
+  border:1px solid rgba(0,240,255,.3);padding:12px 14px;
+  background:rgba(0,240,255,.04);min-width:0;
+}
+.cell .n{font-size:26px;font-weight:700;color:var(--cyan);text-shadow:0 0 10px var(--cyan);line-height:1.1}
+.cell .l{font-size:10px;color:var(--dim);letter-spacing:.14em;text-transform:uppercase;margin-top:6px;
+  overflow-wrap:anywhere}
+.sub{
+  display:flex;gap:8px;align-items:stretch;margin-top:4px;flex-wrap:wrap;
+}
+.sub input{
+  flex:1;min-width:0;background:rgba(0,0,0,.45);
+  border:1px solid var(--border);color:var(--cyan);
+  font-family:inherit;font-size:12px;padding:11px 12px;outline:none;
+  text-shadow:0 0 4px var(--cyan);
+}
+button{
+  font-family:inherit;font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+  padding:11px 18px;cursor:pointer;
+  background:transparent;border:1px solid var(--pink);color:var(--pink);
+  text-shadow:0 0 6px var(--pink);transition:.15s;white-space:nowrap;
+}
+button:hover{background:var(--pink);color:#05030e;text-shadow:none;box-shadow:0 0 16px var(--pink)}
+button.gh{border-color:var(--cyan);color:var(--cyan);text-shadow:0 0 6px var(--cyan)}
+button.gh:hover{background:var(--cyan);color:#05030e;box-shadow:0 0 16px var(--cyan)}
+button:disabled{opacity:.4;cursor:not-allowed}
+.note{font-size:11px;color:var(--dim);line-height:1.85;margin-top:12px;
+  overflow-wrap:anywhere;word-break:break-word}
+.note b{color:var(--yellow);font-weight:400}
+.foot{
+  margin-top:18px;text-align:center;font-size:10px;color:var(--dim);
+  letter-spacing:.2em;text-transform:uppercase;
+}
+.foot a{color:var(--purple);text-decoration:none}
+.foot a:hover{color:var(--pink)}
+#msg{margin-top:10px;font-size:12px;min-height:18px}
+@media(max-width:560px){
+  body{padding:18px 10px 40px}
+  .row{flex-direction:column;gap:2px;font-size:12px}
+  .v{text-align:left}
+  .sub{flex-direction:column}
+  button{width:100%}
+  .grid{grid-template-columns:1fr 1fr;gap:8px}
+  .body{padding:16px 12px}
+  .note{letter-spacing:0;font-size:11px}
+  .title{font-size:10px;letter-spacing:.12em}
+  .k,.v{letter-spacing:0}
+  .cell .n{font-size:22px}
+  .cell .l{letter-spacing:.08em;font-size:9px}
+  .sec-t{letter-spacing:.14em}
+}
+@media(max-width:360px){
+  .grid{grid-template-columns:1fr}
+}
+</style></head>
+<body><div class="wrap"><div class="term">
+  <div class="head">
+    <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+    <div class="title">Opera over MASQUE</div>
+  </div>
+  <div class="body">
+
+    <div class="sec">
+      <div class="sec-t">订阅</div>
+      <div class="sub">
+        <input id="u" value="${sub}" readonly>
+        <button onclick="cp()">复制</button>
+        <button class="gh" onclick="location.href='/sub'">下载</button>
+      </div>
+      <div id="msg"></div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">节点</div>
+      <div class="grid">
+        <div class="cell"><div class="n">${stat.combos ?? "—"}</div><div class="l">组合节点</div></div>
+        <div class="cell"><div class="n">${stat.entries ?? "—"}</div><div class="l">MASQUE 接入点</div></div>
+        <div class="cell"><div class="n">${stat.landings ?? "—"}</div><div class="l">Opera 落地</div></div>
+      </div>
+      <div class="note">
+        每个落地和每个接入点都组合一遍，任一环失效都还有别的路走。<br>
+        节点名 <b>欧洲1@198.1-443</b> = 欧洲第 1 个落地，经 162.159.198.1:443 接入。
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">状态</div>
+      ${row("上次更新", updated ? `${fmt(updated)}（${ago} 分钟前）` : "尚未生成",
+             updated ? (ago > 250 ? "warn" : "ok") : "err")}
+      ${row("下次自动更新", fmt(next))}
+      ${row("更新周期", "每 4 小时")}
+      ${row("WARP 设备", warp.deviceId ? warp.deviceId.slice(0, 8) + "…" : "—")}
+      ${row("WARP 注册于", warp.registeredAt ? fmt(new Date(warp.registeredAt)) : "—")}
+      ${row("内网地址", warp.ipv4 || "—")}
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">操作</div>
+      <div class="sub">
+        <button onclick="go('/api/refresh')">刷新 Opera 凭据</button>
+        <button class="gh" onclick="go('/api/reset-warp')">重注册 WARP 设备</button>
+      </div>
+      <div class="note">
+        Opera 凭据是匿名注册的会过期，连不上就点刷新。<br>
+        WARP 设备信息存在 KV 里复用，<b>一般不用重注册</b>，除非 MASQUE 整体连不上。
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">须知</div>
+      <div class="note">
+        必须用 <b>mihomo Alpha</b> 内核，masque 出站和 dialer-proxy 稳定版都不支持。<br>
+        可用客户端：Clash Verge Rev（内核切 Alpha）、ClashMi、FlClash。<br>
+        Shadowrocket、Stash 不认 dialer-proxy。<br>
+        配置里的 private-key 等同账号凭据，<b>别把订阅链接外传</b>。<br>
+        免费代理的流量对提供方可见，别走支付和敏感数据。
+      </div>
+    </div>
+
+  </div></div>
+  <div class="foot">
+    Cloudflare Worker ・
+    <a href="https://github.com/byJoey/warp-masque-actions">GitHub</a> ・
+    <a href="https://joeyblog.net">Blog</a>
+  </div>
+</div>
+<script>
+function cp(){
+  const el=document.getElementById('u');
+  navigator.clipboard.writeText(el.value).then(
+    ()=>say('已复制到剪贴板','var(--mint)'),
+    ()=>{el.select();document.execCommand('copy');say('已复制','var(--mint)')});
+}
+function say(t,c){
+  const m=document.getElementById('msg');
+  m.textContent='> '+t; m.style.color=c;
+  setTimeout(()=>{m.textContent=''},4000);
+}
+async function go(p){
+  const bs=document.querySelectorAll('button');
+  bs.forEach(b=>b.disabled=true);
+  say('执行中…','var(--yellow)');
+  try{
+    const r=await fetch(p,{method:'POST'});
+    const j=await r.json();
+    if(j.ok){say(j.msg+'，即将刷新','var(--mint)');setTimeout(()=>location.reload(),1200);}
+    else{say('失败: '+j.error,'var(--red)');bs.forEach(b=>b.disabled=false);}
+  }catch(e){say('失败: '+e.message,'var(--red)');bs.forEach(b=>b.disabled=false);}
+}
+</script>
+</body></html>`;
+}

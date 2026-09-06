@@ -7,3 +7,6 @@ dist/
 check/
 opera-proxy
 ruleset/
+node_modules/
+.wrangler/
+worker/package-lock.json

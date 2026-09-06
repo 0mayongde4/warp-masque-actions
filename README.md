@@ -9,6 +9,9 @@
 - **Opera over MASQUE（套娃）** — 在 WARP 外面再叠一层 Opera VPN 落地，
   换个出口国家。见文末[套娃那条](#套娃opera-vpn-叠在-warp-上)。
 
+另外 `worker/` 目录是套娃那条的 Worker 版本，部署到 Cloudflare 上自己每 4 小时
+更新，带个状态页。见[跑在 Worker 上](#跑在-worker-上)。
+
 ## 怎么用
 
 **1. Fork 这个仓库**
@@ -244,3 +247,63 @@ Shadowrocket、Stash 不认 `dialer-proxy`，用不了套娃配置——
 
 `scripts/gen_opera_masque.py`。接入点清单和纯 WARP 那份是同一批
 （`V4` / `V6` / `PORTS`），`REGIONS` 控制取哪些 Opera 大区。
+
+---
+
+## 跑在 Worker 上
+
+Actions 那条要手动点一下才跑。如果想要它自己更新、随时有个 URL 能拿到最新配置，
+用 `worker/` 这份。
+
+Worker 每 4 小时自己重新拿一次 Opera 凭据、重建配置存进 KV。
+WARP 的注册信息也存 KV 里复用，不会每次都注册新设备。
+
+还有个状态页，能看到节点数、上次更新时间、下次更新时间，
+也能手动点刷新。
+
+### 部署
+
+```bash
+cd worker
+npm install
+npx wrangler login
+
+# 建 KV，把输出的 id 填进 wrangler.toml
+npx wrangler kv namespace create KV
+
+npx wrangler deploy
+```
+
+部署完访问 `https://你的worker.workers.dev/` 就是状态页，
+订阅地址是同域名下的 `/sub`。
+
+### 路由
+
+| 路径 | 说明 |
+|---|---|
+| `/` | 状态页 |
+| `/sub` | 订阅，直接填进客户端 |
+| `/api/state` | JSON 格式的状态 |
+| `/api/refresh` | POST，重新拿 Opera 凭据 |
+| `/api/reset-warp` | POST，重注册 WARP 设备 |
+
+`/sub` 带了 `profile-update-interval: 4`，支持这个头的客户端会自己每 4 小时拉一次。
+
+### 两个坑
+
+**WebCrypto 导不出 mihomo 要的私钥格式。** WebCrypto 只能导 PKCS8，
+mihomo 要 SEC1，直接喂会报 `use ParsePKCS8PrivateKey instead`。
+而且光把 PKCS8 里那段抠出来还不够——WebCrypto 省略了曲线参数，
+会接着报 `unknown elliptic curve`。`warp.js` 里的 `pkcs8ToSec1`
+重新编了一份带 P-256 OID 的完整 SEC1。
+
+**Opera 的 API 用 Digest 认证，而 Digest 要 MD5。** WebCrypto 没有 MD5，
+所以 `md5.js` 是手写的。另外 Workers 的 fetch 不自动管 cookie，
+SurfEasy 的会话得手工存 `Set-Cookie`。
+
+### 跟 Actions 版的区别
+
+Worker 版少一道 `mihomo -t` 校验——Actions 里会真的下载 mihomo 加载一遍，
+确保推出去的配置能用，Worker 里做不到。
+
+换来的是自动更新和一个随时可用的 URL。
