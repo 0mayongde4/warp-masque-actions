@@ -3,6 +3,12 @@
 一键生成 Cloudflare WARP 的 mihomo 配置，41 个节点，跑在 GitHub Actions 上。
 不用自己装环境，不用服务器。
 
+仓库里有两条流水线：
+
+- **生成 WARP MASQUE 配置** — 纯 WARP，41 个节点。下面讲的就是这条。
+- **Opera over MASQUE（套娃）** — 在 WARP 外面再叠一层 Opera VPN 落地，
+  换个出口国家。见文末[套娃那条](#套娃opera-vpn-叠在-warp-上)。
+
 ## 怎么用
 
 **1. Fork 这个仓库**
@@ -176,3 +182,65 @@ PORTS = (...)   # 端口
 ```
 
 分流规则用的是 ACL4SSR，改 `RULESETS` 那个列表。
+
+---
+
+## 套娃：Opera VPN 叠在 WARP 上
+
+纯 WARP 的出口是 Cloudflare 自己的 IP，任播决定落地，选不了国家。
+想换出口就得在后面再接一跳。
+
+Opera 浏览器自带的免费 VPN 正好能干这个：底层是 SurfEasy 的标准 HTTPS 代理，
+匿名注册、不限流量、连账号都不用。
+
+```
+本机 -> MASQUE 接入点 -> Opera 落地 -> 目标
+```
+
+### 为什么要套，不直接用 Opera
+
+单用 Opera，你的机器直接连 `77.111.x.x`，这个段一查就知道是什么。
+套上 MASQUE 之后本机只跟 `162.159.198.x` 这类 Cloudflare 地址通信，
+Opera 的地址整个封在 QUIC 隧道里。抓包对比过，直连能看到 Opera 服务器，
+套娃之后完全看不到。
+
+### 全组合
+
+41 个 MASQUE 接入点和每个 Opera 落地都配一遍。落地通常 9 到 11 个，
+最终 400 上下的节点。
+
+这么做是为了任一环失效都还有路走：某个接入点被墙了换个端口或换个段，
+某个落地挂了同地区还有别的。节点名直接写明链路，`欧洲1@198.1-443`
+就是欧洲第 1 个落地经 `162.159.198.1:443` 接入。
+
+组合太多没法平铺着选，按地区收成了 `亚洲线路`、`欧洲线路`、`美洲线路`
+三个 url-test 组，各自在本地区所有组合里挑最快的。都开了 `lazy`，
+不会一进去就把四百多条全测一遍。
+
+### 怎么跑
+
+Actions 里选 `Opera over MASQUE（套娃）`，点 Run workflow。
+
+跑完配置有两个地方：仓库里的 `configs/opera-masque.yaml`（流水线自动提交回来），
+或者运行页面下面的 Artifacts。只想下载不想提交的话，跑之前把 `commit` 勾去掉。
+
+### Opera 凭据会过期
+
+匿名注册的凭据会失效。opera-proxy 自己默认每 4 小时刷一次，
+但 API 不返回真实过期时间，给不了准数。连不上就重跑一次换新的。
+
+### 落地只有三个大区
+
+Opera VPN 只提供亚洲、欧洲、美洲，没有国家级选项。实测落地分别是
+新加坡、阿姆斯特丹、美东。
+
+### 这条流水线也要 Alpha 内核
+
+`dialer-proxy` 和 `masque` 一样只有 Alpha 分支支持。
+Shadowrocket、Stash 不认 `dialer-proxy`，用不了套娃配置——
+它们可以用上面纯 WARP 那份。
+
+### 改配置
+
+`scripts/gen_opera_masque.py`。接入点清单和纯 WARP 那份是同一批
+（`V4` / `V6` / `PORTS`），`REGIONS` 控制取哪些 Opera 大区。
