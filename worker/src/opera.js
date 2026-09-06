@@ -1,6 +1,7 @@
 // Opera VPN (SurfEasy) 匿名注册与落地发现。
 // 坑一: API 用 Digest 认证不是 Basic，要先吃一个 401 拿 nonce。
-// 坑二: Digest 依赖 MD5，WebCrypto 没有，用自带的 md5.js。
+// 坑二: 服务端声明 algorithm="SHA-256"，不是 Digest 默认的 MD5。
+//       按服务端声明的算法走，同时保留 MD5 兜底。
 // 坑三: Workers 的 fetch 不自动管 cookie，会话得手工维持。
 import { md5Hex } from "./md5.js";
 
@@ -18,6 +19,14 @@ const H = {
 };
 
 export const REGIONS = { AS: "亚洲", EU: "欧洲", AM: "美洲" };
+
+/** Digest 的 H()。服务端目前用 SHA-256，老实现是 MD5，两个都支持。 */
+async function digestHash(algo, s) {
+  if (/^md5$/i.test(algo)) return md5Hex(s);
+  const name = /512/.test(algo) ? "SHA-512" : "SHA-256";
+  const d = await crypto.subtle.digest(name, new TextEncoder().encode(s));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 async function sha1Upper(s) {
   const d = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(s));
@@ -49,16 +58,19 @@ class Session {
       const wa = r.headers.get("www-authenticate") || "";
       const g = (k) => (wa.match(new RegExp(`${k}="([^"]*)"`)) || [])[1] || "";
       const realm = g("realm"), nonce = g("nonce"), qop = g("qop"), opaque = g("opaque");
+      // algorithm 可能不带引号，两种写法都认
+      const algo = g("algorithm") ||
+        (wa.match(/algorithm=([\w-]+)/) || [])[1] || "MD5";
       const uri = new URL(url).pathname;
       const cnonce = randHex(8), nc = "00000001";
-      const ha1 = md5Hex(`${API_USER}:${realm}:${API_PASS}`);
-      const ha2 = md5Hex(`POST:${uri}`);
+      const H1 = await digestHash(algo, `${API_USER}:${realm}:${API_PASS}`);
+      const H2 = await digestHash(algo, `POST:${uri}`);
       const q = qop ? qop.split(",")[0].trim() : "";
       const resp = q
-        ? md5Hex(`${ha1}:${nonce}:${nc}:${cnonce}:${q}:${ha2}`)
-        : md5Hex(`${ha1}:${nonce}:${ha2}`);
+        ? await digestHash(algo, `${H1}:${nonce}:${nc}:${cnonce}:${q}:${H2}`)
+        : await digestHash(algo, `${H1}:${nonce}:${H2}`);
       let a = `Digest username="${API_USER}", realm="${realm}", nonce="${nonce}", ` +
-              `uri="${uri}", response="${resp}"`;
+              `uri="${uri}", response="${resp}", algorithm=${algo}`;
       if (q) a += `, qop=${q}, nc=${nc}, cnonce="${cnonce}"`;
       if (opaque) a += `, opaque="${opaque}"`;
       this._absorb(r);

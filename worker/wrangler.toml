@@ -4,20 +4,8 @@ compatibility_date = "2026-09-01"
 # getSetCookie() 需要，缺了 Opera 的会话维持不住
 compatibility_flags = ["nodejs_compat"]
 
-# 每 4 小时重建一次配置
-[triggers]
-crons = ["0 */4 * * *"]
-
-[vars]
-# 订阅路径。改成难猜的字符串，等于在密码之外多一层保护。
-# 例如 SUB_PATH = "a8f3d91c2b"  ->  https://你的域名/a8f3d91c2b?token=...
-SUB_PATH = "sub"
-
-# 建好 KV 后把 id 填进来:
+# 只需要这一个绑定。密码和订阅路径都在界面上设，不用环境变量，也不用 cron。
 #   npx wrangler kv namespace create KV
 [[kv_namespaces]]
 binding = "KV"
 id = "在这里填你的 KV namespace id"
-
-# 密码不写在这里，用 secret 存:
-#   npx wrangler secret put PASSWORD
