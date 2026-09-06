@@ -98,19 +98,6 @@ t("订阅带更新间隔头", sub.headers.get("profile-update-interval") === "4"
 t("无 token 取订阅 404", (await worker.fetch(req("/sub"), env)).status === 404);
 t("错 token 取订阅 404", (await worker.fetch(req("/sub?token=bad.sig"), env)).status === 404);
 
-// ---- 纯 MASQUE 订阅 ----
-kv.set("config:masque", "# masque only\nproxies: []");
-const mq = await worker.fetch(req(`/warp?token=${tok}`), env);
-t("默认路径 /warp 取到纯 MASQUE", mq.status === 200);
-t("纯 MASQUE 内容正确", (await mq.text()).includes("# masque only"));
-t("纯 MASQUE 文件名不同",
-  (mq.headers.get("content-disposition") || "").includes("warp-masque.yaml"));
-t("套娃文件名不同",
-  ((await worker.fetch(req(`/sub?token=${tok}`), env))
-    .headers.get("content-disposition") || "").includes("opera-masque.yaml"));
-t("纯 MASQUE 无 token 也 404",
-  (await worker.fetch(req("/warp"), env)).status === 404);
-
 // ---- UI 改订阅路径 ----
 t("非法路径被拒",
   (await worker.fetch(post("/api/sub-path", { path: "a/b" }, auth), env)).status === 400);
@@ -120,17 +107,7 @@ t("改路径成功",
   (await worker.fetch(post("/api/sub-path", { path: "my-secret" }, auth), env)).status === 200);
 t("新路径生效", (await worker.fetch(req(`/my-secret?token=${tok}`), env)).status === 200);
 t("旧路径失效", (await worker.fetch(req(`/sub?token=${tok}`), env)).status === 404);
-t("改套娃路径不影响纯 MASQUE",
-  (await worker.fetch(req(`/warp?token=${tok}`), env)).status === 200);
 
-t("改纯 MASQUE 路径",
-  (await worker.fetch(post("/api/sub-path", { path: "wp-x1", which: "mq" }, auth), env)).status === 200);
-t("纯 MASQUE 新路径生效",
-  (await worker.fetch(req(`/wp-x1?token=${tok}`), env)).status === 200);
-t("纯 MASQUE 旧路径失效",
-  (await worker.fetch(req(`/warp?token=${tok}`), env)).status === 404);
-t("两条路径不能重名",
-  (await worker.fetch(post("/api/sub-path", { path: "my-secret", which: "mq" }, auth), env)).status === 400);
 
 // ---- UI 改密码 ----
 t("当前密码不对时拒绝改",

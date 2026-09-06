@@ -197,7 +197,7 @@ async function go(e){
 </body></html>`;
 }
 
-export function renderUI(state, host, sp, spMq, token, cred) {
+export function renderUI(state, host, sp, token, cred) {
   const s = state || {};
   const warp = s.warp || {};
   const stat = s.stats || {};
@@ -210,7 +210,6 @@ export function renderUI(state, host, sp, spMq, token, cred) {
     : `${Math.floor(left / 60)} 小时 ${left % 60} 分后过期`;
   const fmt = (d) => d ? d.toISOString().replace("T", " ").slice(0, 19) + " UTC" : "—";
   const sub = `https://${host}${sp}?token=${token}`;
-  const subMq = `https://${host}${spMq}?token=${token}`;
 
   const row = (k, v, cls = "") =>
     `<div class="row"><span class="k">${k}</span><span class="v ${cls}">${v}</span></div>`;
@@ -296,27 +295,17 @@ export function renderUI(state, host, sp, spMq, token, cred) {
   <div class="body">
 
     <div class="sec">
-      <div class="sec-t">订阅 · 套娃（换出口国家）</div>
+      <div class="sec-t">订阅</div>
       <div class="sub">
         <input id="u" value="${sub}" readonly>
         <button onclick="cp('u')">复制</button>
         <button class="gh" onclick="location.href=document.getElementById('u').value">下载</button>
       </div>
       <div class="note">
-        走 MASQUE 再落 Opera，出口是新加坡 / 荷兰 / 美国。节点多，本机看不到 Opera 地址。
-      </div>
-    </div>
-
-    <div class="sec">
-      <div class="sec-t">订阅 · 纯 WARP</div>
-      <div class="sub">
-        <input id="umq" value="${subMq}" readonly>
-        <button onclick="cp('umq')">复制</button>
-        <button class="gh" onclick="location.href=document.getElementById('umq').value">下载</button>
-      </div>
-      <div class="note">
-        只走 MASQUE，出口是 Cloudflare 自己的 IP，任播就近落地、<b>选不了国家</b>。
-        节点少延迟低，不依赖 dialer-proxy。
+        一份聚合，导进去有两类线路可切：<br>
+        <b>亚洲/欧洲/美洲线路</b> — 走 MASQUE 再落 Opera，能换出口国家，但多一跳会慢些。<br>
+        <b>WARP直连</b> — 只走 MASQUE，出口是 Cloudflare 自己的 IP，快但选不了国家。<br>
+        套娃线路超时或落地挂了，切 WARP直连顶上。
       </div>
       <div id="msg"></div>
     </div>
@@ -327,6 +316,7 @@ export function renderUI(state, host, sp, spMq, token, cred) {
         <div class="cell"><div class="n">${stat.combos ?? "—"}</div><div class="l">组合节点</div></div>
         <div class="cell"><div class="n">${stat.entries ?? "—"}</div><div class="l">MASQUE 接入点</div></div>
         <div class="cell"><div class="n">${stat.landings ?? "—"}</div><div class="l">Opera 落地</div></div>
+        <div class="cell"><div class="n">${stat.entries ?? "—"}</div><div class="l">WARP 直连</div></div>
       </div>
       <div class="note">
         每个落地和每个接入点都组合一遍，任一环失效都还有别的路走。<br>
@@ -364,13 +354,8 @@ export function renderUI(state, host, sp, spMq, token, cred) {
       <div class="sec-t">订阅路径</div>
       <div class="sub">
         <input id="sp" value="${sp.replace(/^\//, "")}" spellcheck="false"
-               placeholder="套娃订阅路径">
+               placeholder="字母数字和 - _">
         <button onclick="setPath('sp')">保存</button>
-      </div>
-      <div class="sub">
-        <input id="spmq" value="${spMq.replace(/^\//, "")}" spellcheck="false"
-               placeholder="纯 WARP 订阅路径">
-        <button onclick="setPath('spmq')">保存</button>
       </div>
       <div class="note">
         改成难猜的字符串，等于在密码之外多一层。改完上面的订阅链接要重新复制。
@@ -396,7 +381,7 @@ export function renderUI(state, host, sp, spMq, token, cred) {
       <div class="note">
         必须用 <b>mihomo Alpha</b> 内核，masque 出站和 dialer-proxy 稳定版都不支持。<br>
         可用客户端：Clash Verge Rev（内核切 Alpha）、ClashMi、FlClash。<br>
-        Shadowrocket、Stash 不认 dialer-proxy，<b>只能用纯 WARP 那条</b>。<br>
+        Shadowrocket、Stash 不认 dialer-proxy，导进去只有 WARP直连 那组能用。<br>
         订阅链接里的 token 就是访问凭证，<b>别外传</b>，泄露了改密码即可全部失效。<br>
         配置里的 private-key 等同 WARP 账号凭据。<br>
         免费代理的流量对提供方可见，别走支付和敏感数据。
@@ -435,9 +420,9 @@ async function post(url,body,okmsg){
   }catch(e){say('失败: '+e.message,'var(--red)');bs.forEach(b=>b.disabled=false);}
 }
 function setPath(id){
-  const v=document.getElementById(id).value.trim();
+  const v=document.getElementById(id||'sp').value.trim();
   if(!v){say('路径不能为空','var(--red)');return;}
-  post('/api/sub-path',{path:v,which:id==='spmq'?'mq':'full'},'已保存');
+  post('/api/sub-path',{path:v},'已保存');
 }
 function setPw(){
   const c0=document.getElementById('c0').value;

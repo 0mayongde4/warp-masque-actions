@@ -251,71 +251,6 @@ ${p(picks)}
       - ♻️ 自动选择`;
 }
 
-/** 纯 MASQUE 配置。不经 Opera，出口是 Cloudflare 自己的 IP。
- *  好处是不依赖 dialer-proxy，节点少、延迟低。 */
-export function buildMasqueOnly(warp) {
-  const { entries, proxies } = buildEntries(warp);
-  const { prov, rules } = buildRules();
-
-  const yaml = `# Cloudflare WARP over MASQUE - mihomo 配置
-# 由 Cloudflare Worker 生成于 ${new Date().toISOString()}
-#
-# 纯 WARP，不经 Opera。出口是 Cloudflare 自己的 IP，任播决定落地。
-# 想换出口国家用套娃那份 opera-masque.yaml。
-#
-# 节点 ${entries.length} 个，endpoint 均经真机握手实测。
-# 需要 mihomo Alpha 分支：稳定版没有 masque outbound。
-# private-key 等同 WARP 账号凭据，别外传。
-
-${head(true)}
-
-proxies:
-${proxies.join("\n")}
-
-proxy-groups:
-  - name: 🚀 节点选择
-    type: select
-    proxies:
-      - ♻️ 自动选择
-      - 🔄 故障转移
-${q(entries)}
-
-  - name: ♻️ 自动选择
-    type: url-test
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
-    lazy: true
-    proxies:
-${q(entries)}
-
-  - name: 🔄 故障转移
-    type: fallback
-    url: http://www.gstatic.com/generate_204
-    interval: 180
-    lazy: true
-    proxies:
-${q(entries)}
-
-${tailGroups(["☑️ 手动切换"])}
-
-  - name: ☑️ 手动切换
-    type: select
-    proxies:
-${q(entries)}
-
-rule-providers:
-${prov}
-
-rules:
-${rules}
-  - GEOIP,LAN,🎯 全球直连,no-resolve
-  - GEOIP,CN,🎯 全球直连
-  - MATCH,🐟 漏网之鱼
-`;
-  return { yaml, entries: entries.length };
-}
-
 export function buildConfig(warp, opera) {
   const { entries, proxies } = buildEntries(warp);
 
@@ -335,6 +270,9 @@ export function buildConfig(warp, opera) {
 
   // 组合太多没法平铺选，按地区收成 url-test
   const locNames = Object.keys(byLoc).map((l) => `${l}线路`);
+  // 接入点本来就在 proxies 里（做 dialer-proxy 的目标），
+  // 顺手暴露成一个直连组：套娃慢或落地挂了就切这个，一份订阅够用
+  const picks = [...locNames, "WARP直连"];
   const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}线路
     type: url-test
     url: http://www.gstatic.com/generate_204
@@ -349,11 +287,15 @@ ${q(tags)}`).join("\n\n");
   const yaml = `# Opera VPN over Cloudflare WARP (MASQUE)
 # 由 Cloudflare Worker 生成于 ${new Date().toISOString()}
 #
-# 链路: 本机 -> MASQUE 接入点 -> Opera 落地 -> 目标
+# 聚合版：套娃线路和 WARP 直连都在这一份里。
+#
+#   亚洲/欧洲/美洲线路  本机 -> MASQUE -> Opera 落地 -> 目标（能换出口国家）
+#   WARP直连            本机 -> MASQUE -> 目标（出口是 CF 自己的 IP，快）
+#
 # 节点名 "欧洲1@198.1-443" = 欧洲第 1 个落地，经 162.159.198.1:443 接入。
 #
-# 接入点 ${entries.length} 个 x 落地 ${opera.landings.length} 个 = 组合 ${combos} 个。
-# 任一接入点被墙或任一落地失效，其他组合仍可用。
+# 接入点 ${entries.length} 个 x 落地 ${opera.landings.length} 个 = 组合 ${combos} 个，
+# 外加 ${entries.length} 个直连接入点。任一环失效都有替代路径。
 #
 # 需要 mihomo Alpha 分支：稳定版没有 masque outbound，也不认 dialer-proxy。
 # private-key 等同 WARP 账号凭据，别外传。
@@ -368,7 +310,7 @@ proxy-groups:
     type: select
     proxies:
       - ♻️ 自动选择
-${p(locNames)}
+${p(picks)}
       - 🔄 故障转移
 
   - name: ♻️ 自动选择
@@ -378,7 +320,7 @@ ${p(locNames)}
     tolerance: 50
     lazy: true
     proxies:
-${p(locNames)}
+${p(picks)}
 
   - name: 🔄 故障转移
     type: fallback
@@ -386,11 +328,20 @@ ${p(locNames)}
     interval: 180
     lazy: true
     proxies:
-${p(locNames)}
+${p(picks)}
 
 ${locDefs}
 
-${tailGroups(locNames)}
+  - name: WARP直连
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    lazy: true
+    proxies:
+${q(entries)}
+
+${tailGroups(picks)}
 
 rule-providers:
 ${prov}

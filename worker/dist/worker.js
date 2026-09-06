@@ -612,67 +612,6 @@ ${p(picks)}
       - \u{1F3AF} \u5168\u7403\u76F4\u8FDE
       - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9`;
 }
-function buildMasqueOnly(warp) {
-  const { entries, proxies } = buildEntries(warp);
-  const { prov, rules } = buildRules();
-  const yaml = `# Cloudflare WARP over MASQUE - mihomo \u914D\u7F6E
-# \u7531 Cloudflare Worker \u751F\u6210\u4E8E ${(/* @__PURE__ */ new Date()).toISOString()}
-#
-# \u7EAF WARP\uFF0C\u4E0D\u7ECF Opera\u3002\u51FA\u53E3\u662F Cloudflare \u81EA\u5DF1\u7684 IP\uFF0C\u4EFB\u64AD\u51B3\u5B9A\u843D\u5730\u3002
-# \u60F3\u6362\u51FA\u53E3\u56FD\u5BB6\u7528\u5957\u5A03\u90A3\u4EFD opera-masque.yaml\u3002
-#
-# \u8282\u70B9 ${entries.length} \u4E2A\uFF0Cendpoint \u5747\u7ECF\u771F\u673A\u63E1\u624B\u5B9E\u6D4B\u3002
-# \u9700\u8981 mihomo Alpha \u5206\u652F\uFF1A\u7A33\u5B9A\u7248\u6CA1\u6709 masque outbound\u3002
-# private-key \u7B49\u540C WARP \u8D26\u53F7\u51ED\u636E\uFF0C\u522B\u5916\u4F20\u3002
-
-${head(true)}
-
-proxies:
-${proxies.join("\n")}
-
-proxy-groups:
-  - name: \u{1F680} \u8282\u70B9\u9009\u62E9
-    type: select
-    proxies:
-      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
-      - \u{1F504} \u6545\u969C\u8F6C\u79FB
-${q(entries)}
-
-  - name: \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
-    type: url-test
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
-    lazy: true
-    proxies:
-${q(entries)}
-
-  - name: \u{1F504} \u6545\u969C\u8F6C\u79FB
-    type: fallback
-    url: http://www.gstatic.com/generate_204
-    interval: 180
-    lazy: true
-    proxies:
-${q(entries)}
-
-${tailGroups(["\u2611\uFE0F \u624B\u52A8\u5207\u6362"])}
-
-  - name: \u2611\uFE0F \u624B\u52A8\u5207\u6362
-    type: select
-    proxies:
-${q(entries)}
-
-rule-providers:
-${prov}
-
-rules:
-${rules}
-  - GEOIP,LAN,\u{1F3AF} \u5168\u7403\u76F4\u8FDE,no-resolve
-  - GEOIP,CN,\u{1F3AF} \u5168\u7403\u76F4\u8FDE
-  - MATCH,\u{1F41F} \u6F0F\u7F51\u4E4B\u9C7C
-`;
-  return { yaml, entries: entries.length };
-}
 function buildConfig(warp, opera) {
   const { entries, proxies } = buildEntries(warp);
   const byLoc = {};
@@ -687,6 +626,7 @@ function buildConfig(warp, opera) {
   }
   const combos = Object.values(byLoc).reduce((a, b) => a + b.length, 0);
   const locNames = Object.keys(byLoc).map((l) => `${l}\u7EBF\u8DEF`);
+  const picks = [...locNames, "WARP\u76F4\u8FDE"];
   const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}\u7EBF\u8DEF
     type: url-test
     url: http://www.gstatic.com/generate_204
@@ -699,11 +639,15 @@ ${q(tags)}`).join("\n\n");
   const yaml = `# Opera VPN over Cloudflare WARP (MASQUE)
 # \u7531 Cloudflare Worker \u751F\u6210\u4E8E ${(/* @__PURE__ */ new Date()).toISOString()}
 #
-# \u94FE\u8DEF: \u672C\u673A -> MASQUE \u63A5\u5165\u70B9 -> Opera \u843D\u5730 -> \u76EE\u6807
+# \u805A\u5408\u7248\uFF1A\u5957\u5A03\u7EBF\u8DEF\u548C WARP \u76F4\u8FDE\u90FD\u5728\u8FD9\u4E00\u4EFD\u91CC\u3002
+#
+#   \u4E9A\u6D32/\u6B27\u6D32/\u7F8E\u6D32\u7EBF\u8DEF  \u672C\u673A -> MASQUE -> Opera \u843D\u5730 -> \u76EE\u6807\uFF08\u80FD\u6362\u51FA\u53E3\u56FD\u5BB6\uFF09
+#   WARP\u76F4\u8FDE            \u672C\u673A -> MASQUE -> \u76EE\u6807\uFF08\u51FA\u53E3\u662F CF \u81EA\u5DF1\u7684 IP\uFF0C\u5FEB\uFF09
+#
 # \u8282\u70B9\u540D "\u6B27\u6D321@198.1-443" = \u6B27\u6D32\u7B2C 1 \u4E2A\u843D\u5730\uFF0C\u7ECF 162.159.198.1:443 \u63A5\u5165\u3002
 #
-# \u63A5\u5165\u70B9 ${entries.length} \u4E2A x \u843D\u5730 ${opera.landings.length} \u4E2A = \u7EC4\u5408 ${combos} \u4E2A\u3002
-# \u4EFB\u4E00\u63A5\u5165\u70B9\u88AB\u5899\u6216\u4EFB\u4E00\u843D\u5730\u5931\u6548\uFF0C\u5176\u4ED6\u7EC4\u5408\u4ECD\u53EF\u7528\u3002
+# \u63A5\u5165\u70B9 ${entries.length} \u4E2A x \u843D\u5730 ${opera.landings.length} \u4E2A = \u7EC4\u5408 ${combos} \u4E2A\uFF0C
+# \u5916\u52A0 ${entries.length} \u4E2A\u76F4\u8FDE\u63A5\u5165\u70B9\u3002\u4EFB\u4E00\u73AF\u5931\u6548\u90FD\u6709\u66FF\u4EE3\u8DEF\u5F84\u3002
 #
 # \u9700\u8981 mihomo Alpha \u5206\u652F\uFF1A\u7A33\u5B9A\u7248\u6CA1\u6709 masque outbound\uFF0C\u4E5F\u4E0D\u8BA4 dialer-proxy\u3002
 # private-key \u7B49\u540C WARP \u8D26\u53F7\u51ED\u636E\uFF0C\u522B\u5916\u4F20\u3002
@@ -718,7 +662,7 @@ proxy-groups:
     type: select
     proxies:
       - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
-${p(locNames)}
+${p(picks)}
       - \u{1F504} \u6545\u969C\u8F6C\u79FB
 
   - name: \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
@@ -728,7 +672,7 @@ ${p(locNames)}
     tolerance: 50
     lazy: true
     proxies:
-${p(locNames)}
+${p(picks)}
 
   - name: \u{1F504} \u6545\u969C\u8F6C\u79FB
     type: fallback
@@ -736,11 +680,20 @@ ${p(locNames)}
     interval: 180
     lazy: true
     proxies:
-${p(locNames)}
+${p(picks)}
 
 ${locDefs}
 
-${tailGroups(locNames)}
+  - name: WARP\u76F4\u8FDE
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    lazy: true
+    proxies:
+${q(entries)}
+
+${tailGroups(picks)}
 
 rule-providers:
 ${prov}
@@ -946,7 +899,7 @@ async function go(e){
 <\/script>
 </body></html>`;
 }
-function renderUI(state, host, sp, spMq, token, cred) {
+function renderUI(state, host, sp, token, cred) {
   const s = state || {};
   const warp = s.warp || {};
   const stat = s.stats || {};
@@ -957,7 +910,6 @@ function renderUI(state, host, sp, spMq, token, cred) {
   const leftTxt = left === null ? "\u2014" : left <= 0 ? "\u5DF2\u8FC7\u671F\uFF0C\u4E0B\u6B21\u8BBF\u95EE\u8BA2\u9605\u65F6\u81EA\u52A8\u91CD\u5EFA" : `${Math.floor(left / 60)} \u5C0F\u65F6 ${left % 60} \u5206\u540E\u8FC7\u671F`;
   const fmt = (d) => d ? d.toISOString().replace("T", " ").slice(0, 19) + " UTC" : "\u2014";
   const sub = `https://${host}${sp}?token=${token}`;
-  const subMq = `https://${host}${spMq}?token=${token}`;
   const row = (k, v, cls = "") => `<div class="row"><span class="k">${k}</span><span class="v ${cls}">${v}</span></div>`;
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head>
@@ -1040,27 +992,17 @@ function renderUI(state, host, sp, spMq, token, cred) {
   <div class="body">
 
     <div class="sec">
-      <div class="sec-t">\u8BA2\u9605 \xB7 \u5957\u5A03\uFF08\u6362\u51FA\u53E3\u56FD\u5BB6\uFF09</div>
+      <div class="sec-t">\u8BA2\u9605</div>
       <div class="sub">
         <input id="u" value="${sub}" readonly>
         <button onclick="cp('u')">\u590D\u5236</button>
         <button class="gh" onclick="location.href=document.getElementById('u').value">\u4E0B\u8F7D</button>
       </div>
       <div class="note">
-        \u8D70 MASQUE \u518D\u843D Opera\uFF0C\u51FA\u53E3\u662F\u65B0\u52A0\u5761 / \u8377\u5170 / \u7F8E\u56FD\u3002\u8282\u70B9\u591A\uFF0C\u672C\u673A\u770B\u4E0D\u5230 Opera \u5730\u5740\u3002
-      </div>
-    </div>
-
-    <div class="sec">
-      <div class="sec-t">\u8BA2\u9605 \xB7 \u7EAF WARP</div>
-      <div class="sub">
-        <input id="umq" value="${subMq}" readonly>
-        <button onclick="cp('umq')">\u590D\u5236</button>
-        <button class="gh" onclick="location.href=document.getElementById('umq').value">\u4E0B\u8F7D</button>
-      </div>
-      <div class="note">
-        \u53EA\u8D70 MASQUE\uFF0C\u51FA\u53E3\u662F Cloudflare \u81EA\u5DF1\u7684 IP\uFF0C\u4EFB\u64AD\u5C31\u8FD1\u843D\u5730\u3001<b>\u9009\u4E0D\u4E86\u56FD\u5BB6</b>\u3002
-        \u8282\u70B9\u5C11\u5EF6\u8FDF\u4F4E\uFF0C\u4E0D\u4F9D\u8D56 dialer-proxy\u3002
+        \u4E00\u4EFD\u805A\u5408\uFF0C\u5BFC\u8FDB\u53BB\u6709\u4E24\u7C7B\u7EBF\u8DEF\u53EF\u5207\uFF1A<br>
+        <b>\u4E9A\u6D32/\u6B27\u6D32/\u7F8E\u6D32\u7EBF\u8DEF</b> \u2014 \u8D70 MASQUE \u518D\u843D Opera\uFF0C\u80FD\u6362\u51FA\u53E3\u56FD\u5BB6\uFF0C\u4F46\u591A\u4E00\u8DF3\u4F1A\u6162\u4E9B\u3002<br>
+        <b>WARP\u76F4\u8FDE</b> \u2014 \u53EA\u8D70 MASQUE\uFF0C\u51FA\u53E3\u662F Cloudflare \u81EA\u5DF1\u7684 IP\uFF0C\u5FEB\u4F46\u9009\u4E0D\u4E86\u56FD\u5BB6\u3002<br>
+        \u5957\u5A03\u7EBF\u8DEF\u8D85\u65F6\u6216\u843D\u5730\u6302\u4E86\uFF0C\u5207 WARP\u76F4\u8FDE\u9876\u4E0A\u3002
       </div>
       <div id="msg"></div>
     </div>
@@ -1071,6 +1013,7 @@ function renderUI(state, host, sp, spMq, token, cred) {
         <div class="cell"><div class="n">${stat.combos ?? "\u2014"}</div><div class="l">\u7EC4\u5408\u8282\u70B9</div></div>
         <div class="cell"><div class="n">${stat.entries ?? "\u2014"}</div><div class="l">MASQUE \u63A5\u5165\u70B9</div></div>
         <div class="cell"><div class="n">${stat.landings ?? "\u2014"}</div><div class="l">Opera \u843D\u5730</div></div>
+        <div class="cell"><div class="n">${stat.entries ?? "\u2014"}</div><div class="l">WARP \u76F4\u8FDE</div></div>
       </div>
       <div class="note">
         \u6BCF\u4E2A\u843D\u5730\u548C\u6BCF\u4E2A\u63A5\u5165\u70B9\u90FD\u7EC4\u5408\u4E00\u904D\uFF0C\u4EFB\u4E00\u73AF\u5931\u6548\u90FD\u8FD8\u6709\u522B\u7684\u8DEF\u8D70\u3002<br>
@@ -1111,13 +1054,8 @@ function renderUI(state, host, sp, spMq, token, cred) {
       <div class="sec-t">\u8BA2\u9605\u8DEF\u5F84</div>
       <div class="sub">
         <input id="sp" value="${sp.replace(/^\//, "")}" spellcheck="false"
-               placeholder="\u5957\u5A03\u8BA2\u9605\u8DEF\u5F84">
+               placeholder="\u5B57\u6BCD\u6570\u5B57\u548C - _">
         <button onclick="setPath('sp')">\u4FDD\u5B58</button>
-      </div>
-      <div class="sub">
-        <input id="spmq" value="${spMq.replace(/^\//, "")}" spellcheck="false"
-               placeholder="\u7EAF WARP \u8BA2\u9605\u8DEF\u5F84">
-        <button onclick="setPath('spmq')">\u4FDD\u5B58</button>
       </div>
       <div class="note">
         \u6539\u6210\u96BE\u731C\u7684\u5B57\u7B26\u4E32\uFF0C\u7B49\u4E8E\u5728\u5BC6\u7801\u4E4B\u5916\u591A\u4E00\u5C42\u3002\u6539\u5B8C\u4E0A\u9762\u7684\u8BA2\u9605\u94FE\u63A5\u8981\u91CD\u65B0\u590D\u5236\u3002
@@ -1143,7 +1081,7 @@ function renderUI(state, host, sp, spMq, token, cred) {
       <div class="note">
         \u5FC5\u987B\u7528 <b>mihomo Alpha</b> \u5185\u6838\uFF0Cmasque \u51FA\u7AD9\u548C dialer-proxy \u7A33\u5B9A\u7248\u90FD\u4E0D\u652F\u6301\u3002<br>
         \u53EF\u7528\u5BA2\u6237\u7AEF\uFF1AClash Verge Rev\uFF08\u5185\u6838\u5207 Alpha\uFF09\u3001ClashMi\u3001FlClash\u3002<br>
-        Shadowrocket\u3001Stash \u4E0D\u8BA4 dialer-proxy\uFF0C<b>\u53EA\u80FD\u7528\u7EAF WARP \u90A3\u6761</b>\u3002<br>
+        Shadowrocket\u3001Stash \u4E0D\u8BA4 dialer-proxy\uFF0C\u5BFC\u8FDB\u53BB\u53EA\u6709 WARP\u76F4\u8FDE \u90A3\u7EC4\u80FD\u7528\u3002<br>
         \u8BA2\u9605\u94FE\u63A5\u91CC\u7684 token \u5C31\u662F\u8BBF\u95EE\u51ED\u8BC1\uFF0C<b>\u522B\u5916\u4F20</b>\uFF0C\u6CC4\u9732\u4E86\u6539\u5BC6\u7801\u5373\u53EF\u5168\u90E8\u5931\u6548\u3002<br>
         \u914D\u7F6E\u91CC\u7684 private-key \u7B49\u540C WARP \u8D26\u53F7\u51ED\u636E\u3002<br>
         \u514D\u8D39\u4EE3\u7406\u7684\u6D41\u91CF\u5BF9\u63D0\u4F9B\u65B9\u53EF\u89C1\uFF0C\u522B\u8D70\u652F\u4ED8\u548C\u654F\u611F\u6570\u636E\u3002
@@ -1182,9 +1120,9 @@ async function post(url,body,okmsg){
   }catch(e){say('\u5931\u8D25: '+e.message,'var(--red)');bs.forEach(b=>b.disabled=false);}
 }
 function setPath(id){
-  const v=document.getElementById(id).value.trim();
+  const v=document.getElementById(id||'sp').value.trim();
   if(!v){say('\u8DEF\u5F84\u4E0D\u80FD\u4E3A\u7A7A','var(--red)');return;}
-  post('/api/sub-path',{path:v,which:id==='spmq'?'mq':'full'},'\u5DF2\u4FDD\u5B58');
+  post('/api/sub-path',{path:v},'\u5DF2\u4FDD\u5B58');
 }
 function setPw(){
   const c0=document.getElementById('c0').value;
@@ -1308,7 +1246,6 @@ function normalizePath(p2) {
 // src/index.js
 var K_WARP = "warp:device";
 var K_CFG = "config:yaml";
-var K_CFG_MQ = "config:masque";
 var K_STATE = "state:meta";
 var K_CRED = "auth:cred";
 var K_SET = "settings";
@@ -1316,7 +1253,6 @@ var K_CLAIM = "auth:claim";
 var K_LOCK = "rebuild:lock";
 var COOKIE = "om_session";
 var DEFAULT_SUB = "sub";
-var DEFAULT_SUB_MQ = "warp";
 var TTL_MS = 4 * 3600 * 1e3;
 var SKEW_MS = 10 * 60 * 1e3;
 var json = (o, s = 200) => new Response(JSON.stringify(o), {
@@ -1333,10 +1269,7 @@ var html = (body, s = 200) => new Response(body, {
 var notFound = () => new Response("Not Found", { status: 404 });
 async function getSettings(env) {
   const s = await env.KV.get(K_SET, "json") || {};
-  return {
-    subPath: s.subPath || DEFAULT_SUB,
-    subPathMq: s.subPathMq || DEFAULT_SUB_MQ
-  };
+  return { subPath: s.subPath || DEFAULT_SUB };
 }
 async function getWarp(env, force = false) {
   if (!force) {
@@ -1351,7 +1284,6 @@ async function rebuild(env, { forceWarp = false } = {}) {
   const warp = await getWarp(env, forceWarp);
   const opera = await fetchOpera();
   const { yaml, entries, landings, combos } = buildConfig(warp, opera);
-  const mq = buildMasqueOnly(warp);
   const now = Date.now();
   const state = {
     updatedAt: new Date(now).toISOString(),
@@ -1365,7 +1297,6 @@ async function rebuild(env, { forceWarp = false } = {}) {
     }
   };
   await env.KV.put(K_CFG, yaml);
-  await env.KV.put(K_CFG_MQ, mq.yaml);
   await env.KV.put(K_STATE, JSON.stringify(state));
   return state;
 }
@@ -1373,9 +1304,9 @@ function isFresh(state) {
   if (!state || !state.expiresAt) return false;
   return Date.parse(state.expiresAt) - SKEW_MS > Date.now();
 }
-async function ensureConfig(env, key = K_CFG) {
+async function ensureConfig(env) {
   const state = await env.KV.get(K_STATE, "json");
-  const yaml = await env.KV.get(key);
+  const yaml = await env.KV.get(K_CFG);
   if (yaml && isFresh(state)) return yaml;
   const lock = await env.KV.get(K_LOCK);
   if (lock && Date.now() - Number(lock) < 9e4) {
@@ -1388,7 +1319,7 @@ async function ensureConfig(env, key = K_CFG) {
       await env.KV.delete(K_LOCK);
     }
   }
-  return await env.KV.get(key) || yaml;
+  return await env.KV.get(K_CFG) || yaml;
 }
 var index_default = {
   async fetch(req, env) {
@@ -1431,12 +1362,10 @@ var index_default = {
     }
     const settings = await getSettings(env);
     const subPath = "/" + settings.subPath;
-    const subPathMq = "/" + settings.subPathMq;
-    if (path === subPath || path === subPathMq) {
+    if (path === subPath) {
       const t = url.searchParams.get("token") || "";
       if (!await verifyToken(cred, t) && !authed) return notFound();
-      const mqOnly = path === subPathMq;
-      const yaml = await ensureConfig(env, mqOnly ? K_CFG_MQ : K_CFG);
+      const yaml = await ensureConfig(env);
       if (!yaml) {
         return new Response(
           "\u914D\u7F6E\u751F\u6210\u5931\u8D25\uFF0C\u7A0D\u540E\u91CD\u8BD5\u6216\u5230\u7BA1\u7406\u9875\u624B\u52A8\u5237\u65B0",
@@ -1446,7 +1375,7 @@ var index_default = {
       return new Response(yaml, {
         headers: {
           "content-type": "text/yaml; charset=utf-8",
-          "content-disposition": `attachment; filename="${mqOnly ? "warp-masque" : "opera-masque"}.yaml"`,
+          "content-disposition": 'attachment; filename="opera-masque.yaml"',
           "profile-update-interval": "4",
           "cache-control": "no-store"
         }
@@ -1482,7 +1411,7 @@ var index_default = {
       if (!authed) return html(renderLogin());
       const state = await env.KV.get(K_STATE, "json");
       const token = await signToken(cred);
-      return html(renderUI(state, url.host, subPath, subPathMq, token, cred));
+      return html(renderUI(state, url.host, subPath, token, cred));
     }
     if (!authed) return notFound();
     if (path === "/api/state") {
@@ -1497,15 +1426,8 @@ var index_default = {
           error: "\u53EA\u80FD\u7528\u5B57\u6BCD\u6570\u5B57\u548C - _\uFF0C1-64 \u4F4D\uFF0C\u4E14\u4E0D\u80FD\u662F login/logout/api/setup"
         }, 400);
       }
-      const mq = body.which === "mq";
-      const other = mq ? settings.subPath : settings.subPathMq;
-      if (p2 === other) {
-        return json({ ok: false, error: "\u4E24\u6761\u8BA2\u9605\u8DEF\u5F84\u4E0D\u80FD\u4E00\u6837" }, 400);
-      }
-      await env.KV.put(K_SET, JSON.stringify(
-        mq ? { ...settings, subPathMq: p2 } : { ...settings, subPath: p2 }
-      ));
-      return json({ ok: true, msg: `\u8DEF\u5F84\u5DF2\u6539\u4E3A /${p2}` });
+      await env.KV.put(K_SET, JSON.stringify({ ...settings, subPath: p2 }));
+      return json({ ok: true, msg: `\u8BA2\u9605\u8DEF\u5F84\u5DF2\u6539\u4E3A /${p2}` });
     }
     if (path === "/api/password" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));

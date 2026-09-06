@@ -255,12 +255,13 @@ Shadowrocket、Stash 不认 `dialer-proxy`，用不了套娃配置——
 Actions 那条要手动点一下才跑。如果想要它自己更新、随时有个 URL 能拿到最新配置，
 用 `worker/` 这份。
 
-出两条订阅：
+一份聚合订阅，导进去有两类线路可切：
 
-- **套娃** — MASQUE 打底 + Opera 落地，能换出口国家（新加坡 / 荷兰 / 美国）
-- **纯 WARP** — 只走 MASQUE，出口是 Cloudflare 自己的 IP，节点少延迟低
+- **亚洲 / 欧洲 / 美洲线路** — 走 MASQUE 再落 Opera，能换出口国家，多一跳会慢些
+- **WARP直连** — 只走 MASQUE，出口是 Cloudflare 自己的 IP，快但选不了国家
 
-两条路径都能在界面上改。不认 `dialer-proxy` 的客户端用纯 WARP 那条。
+套娃线路超时或某个落地挂了，切 WARP直连 顶上。这两类共用同一批 MASQUE
+接入点，直连组本来就在配置里（做 dialer-proxy 的目标），顺手暴露出来而已。
 
 不用定时任务。Opera 凭据 4 小时到期，Worker 在订阅被访问时才检查：
 没过期直接给缓存，过期了才重新注册。没人用就不动，不浪费。
@@ -354,8 +355,7 @@ npm run build
 |---|---|
 | `/` | 首次是设密码页，之后是登录/管理页 |
 | `/login` `/logout` | 登录、退出 |
-| 套娃订阅路径 | 默认 `/sub`，要 `?token=` |
-| 纯 WARP 订阅路径 | 默认 `/warp`，要 `?token=` |
+| 你设的订阅路径 | 默认 `/sub`，要 `?token=` |
 | `/api/setup` | POST，首次设密码 |
 | `/api/password` | POST，改密码 |
 | `/api/sub-path` | POST，改订阅路径 |
@@ -394,7 +394,7 @@ SurfEasy 的 API 不返回真实过期时间，所以按这个走，另外留了
 **导入客户端报错说不认识 masque** — 内核不是 mihomo Alpha。见下面那节。
 
 **客户端不认 dialer-proxy** — Shadowrocket、Stash 这类只支持 masque
-不支持链式出站，用纯 WARP 那条订阅。
+不支持链式出站，导进去只有 WARP直连 那组能用，套娃线路会报错。
 
 ### 跑测试
 
@@ -402,8 +402,9 @@ SurfEasy 的 API 不返回真实过期时间，所以按这个走，另外留了
 cd worker && npm test
 ```
 
-33 项，覆盖常数时间比较、token 伪造/篡改/过期、登录限速，
-以及路由层的鉴权（未登录一律 404、订阅 token 校验、cookie 安全属性）。
+80 项，覆盖常数时间比较、token 伪造/篡改/过期、登录限速、并发初始化，
+配置结构（分组完整性、无悬空引用、直连组成员正确），
+以及路由层的鉴权（未登录一律 404、订阅 token 校验、按需重建、cookie 安全属性）。
 
 ### 两个坑
 
