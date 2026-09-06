@@ -188,7 +188,8 @@ export default {
       return new Response(yaml, {
         headers: {
           "content-type": "text/yaml; charset=utf-8",
-          "content-disposition": 'attachment; filename="opera-masque.yaml"',
+          // 文件名不加引号：部分客户端不解析引号，会把 \"x\" 当成文件名的一部分
+          "content-disposition": "attachment; filename=opera-masque.yaml",
           "profile-update-interval": "4",
           "cache-control": "no-store",
         },

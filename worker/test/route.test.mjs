@@ -95,6 +95,9 @@ const sub = await worker.fetch(req(`/sub?token=${tok}`), env);
 t("默认路径 /sub 带 token 可取", sub.status === 200);
 t("订阅是 yaml", (sub.headers.get("content-type") || "").includes("yaml"));
 t("订阅带更新间隔头", sub.headers.get("profile-update-interval") === "4");
+// 文件名不能带引号：部分客户端不解析，会把 \"x\" 当成文件名显示出来
+t("文件名不带引号",
+  sub.headers.get("content-disposition") === "attachment; filename=opera-masque.yaml");
 t("无 token 取订阅 404", (await worker.fetch(req("/sub"), env)).status === 404);
 t("错 token 取订阅 404", (await worker.fetch(req("/sub?token=bad.sig"), env)).status === 404);
 
