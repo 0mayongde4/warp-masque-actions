@@ -66,11 +66,10 @@ function masqueNode(name, ip, port, priv, pub, v4, v6, sni) {
     dns: [1.1.1.1, 2606:4700:4700::1111]`;
 }
 
-export function buildConfig(warp, opera) {
+/** 生成全部 MASQUE 接入点。两种配置都用这批。 */
+function buildEntries(warp) {
   const { privateKey: priv, peerPublicKey: pub, ipv4: v4, ipv6: v6 } = warp;
-
-  const entries = [];
-  const proxies = [];
+  const entries = [], proxies = [];
   for (const ip of [...V4, ...V6]) {
     for (const port of PORTS) {
       const n = entryName(ip, port);
@@ -81,35 +80,14 @@ export function buildConfig(warp, opera) {
   entries.push("官方域名");
   proxies.push(masqueNode("官方域名", SNI_NODE[0], SNI_NODE[1],
                           priv, pub, v4, v6, OFFICIAL_SNI));
+  return { entries, proxies };
+}
 
-  // 笛卡尔积：任一接入点或任一落地失效，其他组合仍可用
-  const byLoc = {};
-  for (const land of opera.landings) {
-    for (const ent of entries) {
-      const name = `${land.tag}@${ent}`;
-      (byLoc[land.loc] ||= []).push(name);
-      proxies.push(
-        `  - {name: "${name}", type: http, server: ${land.ip}, port: ${land.port}, ` +
-        `username: ${opera.username}, password: ${opera.password}, tls: true, ` +
-        `sni: ${land.host}, skip-cert-verify: false, dialer-proxy: ${ent}}`);
-    }
-  }
-  const combos = Object.values(byLoc).reduce((a, b) => a + b.length, 0);
+const q = (a, n = 6) => a.map((x) => " ".repeat(n) + `- "${x}"`).join("\n");
+const p = (a, n = 6) => a.map((x) => " ".repeat(n) + `- ${x}`).join("\n");
 
-  const q = (a, n = 6) => a.map((x) => " ".repeat(n) + `- "${x}"`).join("\n");
-  const p = (a, n = 6) => a.map((x) => " ".repeat(n) + `- ${x}`).join("\n");
-
-  // 组合太多没法平铺选，按地区收成 url-test
-  const locNames = Object.keys(byLoc).map((l) => `${l}线路`);
-  const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}线路
-    type: url-test
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 80
-    lazy: true
-    proxies:
-${q(tags)}`).join("\n\n");
-
+/** rule-providers 和 rules，两种配置共用。 */
+function buildRules() {
   const prov = [], rules = [];
   RULESETS.forEach(([group, url], i) => {
     const pn = `rule${String(i).padStart(2, "0")}`;
@@ -122,24 +100,16 @@ ${q(tags)}`).join("\n\n");
     path: ./ruleset/${pn}.list`);
     rules.push(`  - RULE-SET,${pn},${group}`);
   });
+  return { prov: prov.join("\n"), rules: rules.join("\n") };
+}
 
-  const yaml = `# Opera VPN over Cloudflare WARP (MASQUE)
-# 由 Cloudflare Worker 自动生成于 ${new Date().toISOString()}
-#
-# 链路: 本机 -> MASQUE 接入点 -> Opera 落地 -> 目标
-# 节点名 "欧洲1@198.1-443" = 欧洲第 1 个落地，经 162.159.198.1:443 接入。
-#
-# 接入点 ${entries.length} 个 x 落地 ${opera.landings.length} 个 = 组合 ${combos} 个。
-# 任一接入点被墙或任一落地失效，其他组合仍可用。
-#
-# 需要 mihomo Alpha 分支：稳定版没有 masque outbound。
-# private-key 等同 WARP 账号凭据，别外传。
-
-mixed-port: 7890
+/** 公共头部：端口、DNS、sniffer 那一堆。 */
+function head(ipv6) {
+  return `mixed-port: 7890
 allow-lan: false
 mode: rule
 log-level: info
-ipv6: true
+ipv6: ${ipv6}
 unified-delay: true
 tcp-concurrent: true
 find-process-mode: 'off'
@@ -166,7 +136,7 @@ sniffer:
 dns:
   enable: true
   listen: 0.0.0.0:1053
-  ipv6: true
+  ipv6: ${ipv6}
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
   fake-ip-filter:
@@ -188,45 +158,19 @@ dns:
       - https://1.12.12.12/dns-query
     'geosite:geolocation-!cn':
       - https://1.1.1.1/dns-query
-      - https://8.8.8.8/dns-query
+      - https://8.8.8.8/dns-query`;
+}
 
-proxies:
-${proxies.join("\n")}
-
-proxy-groups:
-  - name: 🚀 节点选择
-    type: select
-    proxies:
-      - ♻️ 自动选择
-${p(locNames)}
-      - 🔄 故障转移
-
-  - name: ♻️ 自动选择
-    type: url-test
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
-    lazy: true
-    proxies:
-${p(locNames)}
-
-  - name: 🔄 故障转移
-    type: fallback
-    url: http://www.gstatic.com/generate_204
-    interval: 180
-    lazy: true
-    proxies:
-${p(locNames)}
-
-${locDefs}
-
-  - name: 📹 油管视频
+/** 下游分组（油管/奈飞/OpenAI 那些），两种配置共用。
+ *  picks 是给「节点选择」之外的组用的候选列表。 */
+function tailGroups(picks) {
+  return `  - name: 📹 油管视频
     type: select
     proxies:
       - 🚀 节点选择
       - ♻️ 自动选择
       - 🔄 故障转移
-${p(locNames)}
+${p(picks)}
 
   - name: 🎥 奈飞视频
     type: select
@@ -234,7 +178,7 @@ ${p(locNames)}
       - 🚀 节点选择
       - ♻️ 自动选择
       - 🔄 故障转移
-${p(locNames)}
+${p(picks)}
 
   - name: 🌍 国外媒体
     type: select
@@ -257,7 +201,7 @@ ${p(locNames)}
       - 🚀 节点选择
       - ♻️ 自动选择
       - 🔄 故障转移
-${p(locNames)}
+${p(picks)}
 
   - name: Ⓜ️ 微软服务
     type: select
@@ -304,13 +248,155 @@ ${p(locNames)}
     proxies:
       - 🚀 节点选择
       - 🎯 全球直连
+      - ♻️ 自动选择`;
+}
+
+/** 纯 MASQUE 配置。不经 Opera，出口是 Cloudflare 自己的 IP。
+ *  好处是不依赖 dialer-proxy，节点少、延迟低。 */
+export function buildMasqueOnly(warp) {
+  const { entries, proxies } = buildEntries(warp);
+  const { prov, rules } = buildRules();
+
+  const yaml = `# Cloudflare WARP over MASQUE - mihomo 配置
+# 由 Cloudflare Worker 生成于 ${new Date().toISOString()}
+#
+# 纯 WARP，不经 Opera。出口是 Cloudflare 自己的 IP，任播决定落地。
+# 想换出口国家用套娃那份 opera-masque.yaml。
+#
+# 节点 ${entries.length} 个，endpoint 均经真机握手实测。
+# 需要 mihomo Alpha 分支：稳定版没有 masque outbound。
+# private-key 等同 WARP 账号凭据，别外传。
+
+${head(true)}
+
+proxies:
+${proxies.join("\n")}
+
+proxy-groups:
+  - name: 🚀 节点选择
+    type: select
+    proxies:
       - ♻️ 自动选择
+      - 🔄 故障转移
+${q(entries)}
+
+  - name: ♻️ 自动选择
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    lazy: true
+    proxies:
+${q(entries)}
+
+  - name: 🔄 故障转移
+    type: fallback
+    url: http://www.gstatic.com/generate_204
+    interval: 180
+    lazy: true
+    proxies:
+${q(entries)}
+
+${tailGroups(["☑️ 手动切换"])}
+
+  - name: ☑️ 手动切换
+    type: select
+    proxies:
+${q(entries)}
 
 rule-providers:
-${prov.join("\n")}
+${prov}
 
 rules:
-${rules.join("\n")}
+${rules}
+  - GEOIP,LAN,🎯 全球直连,no-resolve
+  - GEOIP,CN,🎯 全球直连
+  - MATCH,🐟 漏网之鱼
+`;
+  return { yaml, entries: entries.length };
+}
+
+export function buildConfig(warp, opera) {
+  const { entries, proxies } = buildEntries(warp);
+
+  // 笛卡尔积：任一接入点或任一落地失效，其他组合仍可用
+  const byLoc = {};
+  for (const land of opera.landings) {
+    for (const ent of entries) {
+      const name = `${land.tag}@${ent}`;
+      (byLoc[land.loc] ||= []).push(name);
+      proxies.push(
+        `  - {name: "${name}", type: http, server: ${land.ip}, port: ${land.port}, ` +
+        `username: ${opera.username}, password: ${opera.password}, tls: true, ` +
+        `sni: ${land.host}, skip-cert-verify: false, dialer-proxy: ${ent}}`);
+    }
+  }
+  const combos = Object.values(byLoc).reduce((a, b) => a + b.length, 0);
+
+  // 组合太多没法平铺选，按地区收成 url-test
+  const locNames = Object.keys(byLoc).map((l) => `${l}线路`);
+  const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}线路
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 80
+    lazy: true
+    proxies:
+${q(tags)}`).join("\n\n");
+
+  const { prov, rules } = buildRules();
+
+  const yaml = `# Opera VPN over Cloudflare WARP (MASQUE)
+# 由 Cloudflare Worker 生成于 ${new Date().toISOString()}
+#
+# 链路: 本机 -> MASQUE 接入点 -> Opera 落地 -> 目标
+# 节点名 "欧洲1@198.1-443" = 欧洲第 1 个落地，经 162.159.198.1:443 接入。
+#
+# 接入点 ${entries.length} 个 x 落地 ${opera.landings.length} 个 = 组合 ${combos} 个。
+# 任一接入点被墙或任一落地失效，其他组合仍可用。
+#
+# 需要 mihomo Alpha 分支：稳定版没有 masque outbound，也不认 dialer-proxy。
+# private-key 等同 WARP 账号凭据，别外传。
+
+${head(true)}
+
+proxies:
+${proxies.join("\n")}
+
+proxy-groups:
+  - name: 🚀 节点选择
+    type: select
+    proxies:
+      - ♻️ 自动选择
+${p(locNames)}
+      - 🔄 故障转移
+
+  - name: ♻️ 自动选择
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    lazy: true
+    proxies:
+${p(locNames)}
+
+  - name: 🔄 故障转移
+    type: fallback
+    url: http://www.gstatic.com/generate_204
+    interval: 180
+    lazy: true
+    proxies:
+${p(locNames)}
+
+${locDefs}
+
+${tailGroups(locNames)}
+
+rule-providers:
+${prov}
+
+rules:
+${rules}
   - GEOIP,LAN,🎯 全球直连,no-resolve
   - GEOIP,CN,🎯 全球直连
   - MATCH,🐟 漏网之鱼

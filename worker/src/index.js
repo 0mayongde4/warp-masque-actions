@@ -9,7 +9,7 @@
 //   3. 首次访问引导设密码，之后订阅路径、改密码都在界面里做
 import { registerWarp } from "./warp.js";
 import { fetchOpera } from "./opera.js";
-import { buildConfig } from "./config.js";
+import { buildConfig, buildMasqueOnly } from "./config.js";
 import { renderUI, renderLogin, renderSetup, renderNoKV } from "./ui.js";
 import {
   safeEqual, makeCred, checkPassword, signToken, verifyToken,
@@ -17,7 +17,8 @@ import {
 } from "./auth.js";
 
 const K_WARP = "warp:device";     // WARP 注册信息，长期复用
-const K_CFG = "config:yaml";      // 生成好的配置
+const K_CFG = "config:yaml";      // 套娃配置（MASQUE + Opera）
+const K_CFG_MQ = "config:masque"; // 纯 MASQUE 配置
 const K_STATE = "state:meta";     // 状态元数据，给 UI 用
 const K_CRED = "auth:cred";       // 密码哈希 + 盐
 const K_SET = "settings";         // 订阅路径等设置
@@ -25,6 +26,7 @@ const K_CLAIM = "auth:claim";     // 初始化时的抢占标记
 const K_LOCK = "rebuild:lock";    // 重建锁，防并发重复注册
 const COOKIE = "om_session";
 const DEFAULT_SUB = "sub";
+const DEFAULT_SUB_MQ = "warp";
 
 // Opera 凭据有效期。opera-proxy 默认每 4 小时刷新一次登录和设备密码
 // （main.go: -refresh 4h），API 本身不返回真实 TTL，按这个值走。
@@ -50,7 +52,11 @@ const html = (body, s = 200) =>
 const notFound = () => new Response("Not Found", { status: 404 });
 
 async function getSettings(env) {
-  return (await env.KV.get(K_SET, "json")) || { subPath: DEFAULT_SUB };
+  const s = (await env.KV.get(K_SET, "json")) || {};
+  return {
+    subPath: s.subPath || DEFAULT_SUB,
+    subPathMq: s.subPathMq || DEFAULT_SUB_MQ,
+  };
 }
 
 /** 拿 WARP 设备信息，KV 里有就复用，没有才注册。 */
@@ -69,6 +75,8 @@ async function rebuild(env, { forceWarp = false } = {}) {
   const warp = await getWarp(env, forceWarp);
   const opera = await fetchOpera();
   const { yaml, entries, landings, combos } = buildConfig(warp, opera);
+  // 纯 MASQUE 那份不依赖 Opera，顺手一起产出
+  const mq = buildMasqueOnly(warp);
 
   const now = Date.now();
   const state = {
@@ -84,6 +92,7 @@ async function rebuild(env, { forceWarp = false } = {}) {
   };
 
   await env.KV.put(K_CFG, yaml);
+  await env.KV.put(K_CFG_MQ, mq.yaml);
   await env.KV.put(K_STATE, JSON.stringify(state));
   return state;
 }
@@ -100,9 +109,9 @@ function isFresh(state) {
  * Opera 账号，还可能触发风控。拿不到锁的一方用旧配置顶一下，
  * 旧配置也没有才等着。
  */
-async function ensureConfig(env) {
+async function ensureConfig(env, key = K_CFG) {
   const state = await env.KV.get(K_STATE, "json");
-  const yaml = await env.KV.get(K_CFG);
+  const yaml = await env.KV.get(key);
   if (yaml && isFresh(state)) return yaml;
 
   const lock = await env.KV.get(K_LOCK);
@@ -117,7 +126,7 @@ async function ensureConfig(env) {
       await env.KV.delete(K_LOCK);
     }
   }
-  return (await env.KV.get(K_CFG)) || yaml;
+  return (await env.KV.get(key)) || yaml;
 }
 
 export default {
@@ -172,14 +181,17 @@ export default {
     }
 
     const settings = await getSettings(env);
-    const subPath = "/" + (settings.subPath || DEFAULT_SUB);
+    const subPath = "/" + settings.subPath;
+    const subPathMq = "/" + settings.subPathMq;
 
     // ---- 订阅。客户端带不了 cookie，用 ?token= ----
-    if (path === subPath) {
+    // 两条：套娃（经 Opera 换出口）和纯 MASQUE（出口是 Cloudflare）
+    if (path === subPath || path === subPathMq) {
       const t = url.searchParams.get("token") || "";
       if (!(await verifyToken(cred, t)) && !authed) return notFound();
 
-      const yaml = await ensureConfig(env);
+      const mqOnly = path === subPathMq;
+      const yaml = await ensureConfig(env, mqOnly ? K_CFG_MQ : K_CFG);
       if (!yaml) {
         return new Response("配置生成失败，稍后重试或到管理页手动刷新",
           { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } });
@@ -187,7 +199,8 @@ export default {
       return new Response(yaml, {
         headers: {
           "content-type": "text/yaml; charset=utf-8",
-          "content-disposition": 'attachment; filename="opera-masque.yaml"',
+          "content-disposition": `attachment; filename="${
+            mqOnly ? "warp-masque" : "opera-masque"}.yaml"`,
           "profile-update-interval": "4",
           "cache-control": "no-store",
         },
@@ -229,7 +242,7 @@ export default {
       if (!authed) return html(renderLogin());
       const state = await env.KV.get(K_STATE, "json");
       const token = await signToken(cred);
-      return html(renderUI(state, url.host, subPath, token, cred));
+      return html(renderUI(state, url.host, subPath, subPathMq, token, cred));
     }
 
     // ---- 以下都要登录。未登录一律 404，不用 401 ----
@@ -240,7 +253,7 @@ export default {
       return json((await env.KV.get(K_STATE, "json")) || {});
     }
 
-    // 改订阅路径
+    // 改订阅路径。which=mq 改纯 MASQUE 那条，否则改套娃那条
     if (path === "/api/sub-path" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
       const p = normalizePath(body.path);
@@ -250,8 +263,14 @@ export default {
           error: "只能用字母数字和 - _，1-64 位，且不能是 login/logout/api/setup",
         }, 400);
       }
-      await env.KV.put(K_SET, JSON.stringify({ ...settings, subPath: p }));
-      return json({ ok: true, msg: `订阅路径已改为 /${p}` });
+      const mq = body.which === "mq";
+      const other = mq ? settings.subPath : settings.subPathMq;
+      if (p === other) {
+        return json({ ok: false, error: "两条订阅路径不能一样" }, 400);
+      }
+      await env.KV.put(K_SET, JSON.stringify(
+        mq ? { ...settings, subPathMq: p } : { ...settings, subPath: p }));
+      return json({ ok: true, msg: `路径已改为 /${p}` });
     }
 
     // 改密码。旧 token 会因为哈希变化自动失效，所以要重新下发

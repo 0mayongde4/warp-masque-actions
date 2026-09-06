@@ -255,6 +255,13 @@ Shadowrocket、Stash 不认 `dialer-proxy`，用不了套娃配置——
 Actions 那条要手动点一下才跑。如果想要它自己更新、随时有个 URL 能拿到最新配置，
 用 `worker/` 这份。
 
+出两条订阅：
+
+- **套娃** — MASQUE 打底 + Opera 落地，能换出口国家（新加坡 / 荷兰 / 美国）
+- **纯 WARP** — 只走 MASQUE，出口是 Cloudflare 自己的 IP，节点少延迟低
+
+两条路径都能在界面上改。不认 `dialer-proxy` 的客户端用纯 WARP 那条。
+
 不用定时任务。Opera 凭据 4 小时到期，Worker 在订阅被访问时才检查：
 没过期直接给缓存，过期了才重新注册。没人用就不动，不浪费。
 
@@ -347,7 +354,8 @@ npm run build
 |---|---|
 | `/` | 首次是设密码页，之后是登录/管理页 |
 | `/login` `/logout` | 登录、退出 |
-| 你设的订阅路径 | 订阅，要 `?token=` |
+| 套娃订阅路径 | 默认 `/sub`，要 `?token=` |
+| 纯 WARP 订阅路径 | 默认 `/warp`，要 `?token=` |
 | `/api/setup` | POST，首次设密码 |
 | `/api/password` | POST，改密码 |
 | `/api/sub-path` | POST，改订阅路径 |
@@ -384,6 +392,9 @@ SurfEasy 的 API 不返回真实过期时间，所以按这个走，另外留了
 **节点全都连不上** — 先点`刷新 Opera 凭据`。还不行再点`重注册 WARP 设备`。
 
 **导入客户端报错说不认识 masque** — 内核不是 mihomo Alpha。见下面那节。
+
+**客户端不认 dialer-proxy** — Shadowrocket、Stash 这类只支持 masque
+不支持链式出站，用纯 WARP 那条订阅。
 
 ### 跑测试
 

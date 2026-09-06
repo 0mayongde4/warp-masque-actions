@@ -81,14 +81,14 @@ function pkcs8ToSec1(b64pkcs8) {
   const tlv = (pos) => {
     const tag2 = der[pos];
     let len2 = der[pos + 1];
-    let p = pos + 2;
+    let p2 = pos + 2;
     if (len2 & 128) {
       const n = len2 & 127;
       len2 = 0;
-      for (let k = 0; k < n; k++) len2 = len2 << 8 | der[p + k];
-      p += n;
+      for (let k = 0; k < n; k++) len2 = len2 << 8 | der[p2 + k];
+      p2 += n;
     }
-    return [tag2, p, len2, p + len2];
+    return [tag2, p2, len2, p2 + len2];
   };
   let i = tlv(0)[1];
   i = tlv(i)[3];
@@ -122,14 +122,14 @@ function pkcs8ToSec1(b64pkcs8) {
 function tlv2(buf, pos) {
   const tag = buf[pos];
   let len = buf[pos + 1];
-  let p = pos + 2;
+  let p2 = pos + 2;
   if (len & 128) {
     const n = len & 127;
     len = 0;
-    for (let k = 0; k < n; k++) len = len << 8 | buf[p + k];
-    p += n;
+    for (let k = 0; k < n; k++) len = len << 8 | buf[p2 + k];
+    p2 += n;
   }
-  return [tag, p, len, p + len];
+  return [tag, p2, len, p2 + len];
 }
 function derLen(n) {
   if (n < 128) return [n];
@@ -308,10 +308,10 @@ var Session = class {
       const cnonce = randHex2(8), nc = "00000001";
       const H1 = await digestHash(algo, `${API_USER}:${realm}:${API_PASS}`);
       const H22 = await digestHash(algo, `POST:${uri}`);
-      const q = qop ? qop.split(",")[0].trim() : "";
-      const resp = q ? await digestHash(algo, `${H1}:${nonce}:${nc}:${cnonce}:${q}:${H22}`) : await digestHash(algo, `${H1}:${nonce}:${H22}`);
+      const q2 = qop ? qop.split(",")[0].trim() : "";
+      const resp = q2 ? await digestHash(algo, `${H1}:${nonce}:${nc}:${cnonce}:${q2}:${H22}`) : await digestHash(algo, `${H1}:${nonce}:${H22}`);
       let a = `Digest username="${API_USER}", realm="${realm}", nonce="${nonce}", uri="${uri}", response="${resp}", algorithm=${algo}`;
-      if (q) a += `, qop=${q}, nc=${nc}, cnonce="${cnonce}"`;
+      if (q2) a += `, qop=${q2}, nc=${nc}, cnonce="${cnonce}"`;
       if (opaque) a += `, opaque="${opaque}"`;
       this._absorb(r);
       r = await fetch(url, {
@@ -429,10 +429,9 @@ function masqueNode(name, ip, port, priv, pub, v4, v6, sni) {
     remote-dns-resolve: true
     dns: [1.1.1.1, 2606:4700:4700::1111]`;
 }
-function buildConfig(warp, opera) {
+function buildEntries(warp) {
   const { privateKey: priv, peerPublicKey: pub, ipv4: v4, ipv6: v6 } = warp;
-  const entries = [];
-  const proxies = [];
+  const entries = [], proxies = [];
   for (const ip of [...V4, ...V6]) {
     for (const port of PORTS) {
       const n = entryName(ip, port);
@@ -451,28 +450,11 @@ function buildConfig(warp, opera) {
     v6,
     OFFICIAL_SNI
   ));
-  const byLoc = {};
-  for (const land of opera.landings) {
-    for (const ent of entries) {
-      const name = `${land.tag}@${ent}`;
-      (byLoc[land.loc] ||= []).push(name);
-      proxies.push(
-        `  - {name: "${name}", type: http, server: ${land.ip}, port: ${land.port}, username: ${opera.username}, password: ${opera.password}, tls: true, sni: ${land.host}, skip-cert-verify: false, dialer-proxy: ${ent}}`
-      );
-    }
-  }
-  const combos = Object.values(byLoc).reduce((a, b) => a + b.length, 0);
-  const q = (a, n = 6) => a.map((x) => " ".repeat(n) + `- "${x}"`).join("\n");
-  const p = (a, n = 6) => a.map((x) => " ".repeat(n) + `- ${x}`).join("\n");
-  const locNames = Object.keys(byLoc).map((l) => `${l}\u7EBF\u8DEF`);
-  const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}\u7EBF\u8DEF
-    type: url-test
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 80
-    lazy: true
-    proxies:
-${q(tags)}`).join("\n\n");
+  return { entries, proxies };
+}
+var q = (a, n = 6) => a.map((x) => " ".repeat(n) + `- "${x}"`).join("\n");
+var p = (a, n = 6) => a.map((x) => " ".repeat(n) + `- ${x}`).join("\n");
+function buildRules() {
   const prov = [], rules = [];
   RULESETS.forEach(([group, url], i) => {
     const pn = `rule${String(i).padStart(2, "0")}`;
@@ -485,23 +467,14 @@ ${q(tags)}`).join("\n\n");
     path: ./ruleset/${pn}.list`);
     rules.push(`  - RULE-SET,${pn},${group}`);
   });
-  const yaml = `# Opera VPN over Cloudflare WARP (MASQUE)
-# \u7531 Cloudflare Worker \u81EA\u52A8\u751F\u6210\u4E8E ${(/* @__PURE__ */ new Date()).toISOString()}
-#
-# \u94FE\u8DEF: \u672C\u673A -> MASQUE \u63A5\u5165\u70B9 -> Opera \u843D\u5730 -> \u76EE\u6807
-# \u8282\u70B9\u540D "\u6B27\u6D321@198.1-443" = \u6B27\u6D32\u7B2C 1 \u4E2A\u843D\u5730\uFF0C\u7ECF 162.159.198.1:443 \u63A5\u5165\u3002
-#
-# \u63A5\u5165\u70B9 ${entries.length} \u4E2A x \u843D\u5730 ${opera.landings.length} \u4E2A = \u7EC4\u5408 ${combos} \u4E2A\u3002
-# \u4EFB\u4E00\u63A5\u5165\u70B9\u88AB\u5899\u6216\u4EFB\u4E00\u843D\u5730\u5931\u6548\uFF0C\u5176\u4ED6\u7EC4\u5408\u4ECD\u53EF\u7528\u3002
-#
-# \u9700\u8981 mihomo Alpha \u5206\u652F\uFF1A\u7A33\u5B9A\u7248\u6CA1\u6709 masque outbound\u3002
-# private-key \u7B49\u540C WARP \u8D26\u53F7\u51ED\u636E\uFF0C\u522B\u5916\u4F20\u3002
-
-mixed-port: 7890
+  return { prov: prov.join("\n"), rules: rules.join("\n") };
+}
+function head(ipv6) {
+  return `mixed-port: 7890
 allow-lan: false
 mode: rule
 log-level: info
-ipv6: true
+ipv6: ${ipv6}
 unified-delay: true
 tcp-concurrent: true
 find-process-mode: 'off'
@@ -528,7 +501,7 @@ sniffer:
 dns:
   enable: true
   listen: 0.0.0.0:1053
-  ipv6: true
+  ipv6: ${ipv6}
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
   fake-ip-filter:
@@ -550,45 +523,16 @@ dns:
       - https://1.12.12.12/dns-query
     'geosite:geolocation-!cn':
       - https://1.1.1.1/dns-query
-      - https://8.8.8.8/dns-query
-
-proxies:
-${proxies.join("\n")}
-
-proxy-groups:
-  - name: \u{1F680} \u8282\u70B9\u9009\u62E9
-    type: select
-    proxies:
-      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
-${p(locNames)}
-      - \u{1F504} \u6545\u969C\u8F6C\u79FB
-
-  - name: \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
-    type: url-test
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
-    lazy: true
-    proxies:
-${p(locNames)}
-
-  - name: \u{1F504} \u6545\u969C\u8F6C\u79FB
-    type: fallback
-    url: http://www.gstatic.com/generate_204
-    interval: 180
-    lazy: true
-    proxies:
-${p(locNames)}
-
-${locDefs}
-
-  - name: \u{1F4F9} \u6CB9\u7BA1\u89C6\u9891
+      - https://8.8.8.8/dns-query`;
+}
+function tailGroups(picks) {
+  return `  - name: \u{1F4F9} \u6CB9\u7BA1\u89C6\u9891
     type: select
     proxies:
       - \u{1F680} \u8282\u70B9\u9009\u62E9
       - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
       - \u{1F504} \u6545\u969C\u8F6C\u79FB
-${p(locNames)}
+${p(picks)}
 
   - name: \u{1F3A5} \u5948\u98DE\u89C6\u9891
     type: select
@@ -596,7 +540,7 @@ ${p(locNames)}
       - \u{1F680} \u8282\u70B9\u9009\u62E9
       - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
       - \u{1F504} \u6545\u969C\u8F6C\u79FB
-${p(locNames)}
+${p(picks)}
 
   - name: \u{1F30D} \u56FD\u5916\u5A92\u4F53
     type: select
@@ -619,7 +563,7 @@ ${p(locNames)}
       - \u{1F680} \u8282\u70B9\u9009\u62E9
       - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
       - \u{1F504} \u6545\u969C\u8F6C\u79FB
-${p(locNames)}
+${p(picks)}
 
   - name: \u24C2\uFE0F \u5FAE\u8F6F\u670D\u52A1
     type: select
@@ -666,13 +610,143 @@ ${p(locNames)}
     proxies:
       - \u{1F680} \u8282\u70B9\u9009\u62E9
       - \u{1F3AF} \u5168\u7403\u76F4\u8FDE
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9`;
+}
+function buildMasqueOnly(warp) {
+  const { entries, proxies } = buildEntries(warp);
+  const { prov, rules } = buildRules();
+  const yaml = `# Cloudflare WARP over MASQUE - mihomo \u914D\u7F6E
+# \u7531 Cloudflare Worker \u751F\u6210\u4E8E ${(/* @__PURE__ */ new Date()).toISOString()}
+#
+# \u7EAF WARP\uFF0C\u4E0D\u7ECF Opera\u3002\u51FA\u53E3\u662F Cloudflare \u81EA\u5DF1\u7684 IP\uFF0C\u4EFB\u64AD\u51B3\u5B9A\u843D\u5730\u3002
+# \u60F3\u6362\u51FA\u53E3\u56FD\u5BB6\u7528\u5957\u5A03\u90A3\u4EFD opera-masque.yaml\u3002
+#
+# \u8282\u70B9 ${entries.length} \u4E2A\uFF0Cendpoint \u5747\u7ECF\u771F\u673A\u63E1\u624B\u5B9E\u6D4B\u3002
+# \u9700\u8981 mihomo Alpha \u5206\u652F\uFF1A\u7A33\u5B9A\u7248\u6CA1\u6709 masque outbound\u3002
+# private-key \u7B49\u540C WARP \u8D26\u53F7\u51ED\u636E\uFF0C\u522B\u5916\u4F20\u3002
+
+${head(true)}
+
+proxies:
+${proxies.join("\n")}
+
+proxy-groups:
+  - name: \u{1F680} \u8282\u70B9\u9009\u62E9
+    type: select
+    proxies:
       - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+      - \u{1F504} \u6545\u969C\u8F6C\u79FB
+${q(entries)}
+
+  - name: \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    lazy: true
+    proxies:
+${q(entries)}
+
+  - name: \u{1F504} \u6545\u969C\u8F6C\u79FB
+    type: fallback
+    url: http://www.gstatic.com/generate_204
+    interval: 180
+    lazy: true
+    proxies:
+${q(entries)}
+
+${tailGroups(["\u2611\uFE0F \u624B\u52A8\u5207\u6362"])}
+
+  - name: \u2611\uFE0F \u624B\u52A8\u5207\u6362
+    type: select
+    proxies:
+${q(entries)}
 
 rule-providers:
-${prov.join("\n")}
+${prov}
 
 rules:
-${rules.join("\n")}
+${rules}
+  - GEOIP,LAN,\u{1F3AF} \u5168\u7403\u76F4\u8FDE,no-resolve
+  - GEOIP,CN,\u{1F3AF} \u5168\u7403\u76F4\u8FDE
+  - MATCH,\u{1F41F} \u6F0F\u7F51\u4E4B\u9C7C
+`;
+  return { yaml, entries: entries.length };
+}
+function buildConfig(warp, opera) {
+  const { entries, proxies } = buildEntries(warp);
+  const byLoc = {};
+  for (const land of opera.landings) {
+    for (const ent of entries) {
+      const name = `${land.tag}@${ent}`;
+      (byLoc[land.loc] ||= []).push(name);
+      proxies.push(
+        `  - {name: "${name}", type: http, server: ${land.ip}, port: ${land.port}, username: ${opera.username}, password: ${opera.password}, tls: true, sni: ${land.host}, skip-cert-verify: false, dialer-proxy: ${ent}}`
+      );
+    }
+  }
+  const combos = Object.values(byLoc).reduce((a, b) => a + b.length, 0);
+  const locNames = Object.keys(byLoc).map((l) => `${l}\u7EBF\u8DEF`);
+  const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}\u7EBF\u8DEF
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 80
+    lazy: true
+    proxies:
+${q(tags)}`).join("\n\n");
+  const { prov, rules } = buildRules();
+  const yaml = `# Opera VPN over Cloudflare WARP (MASQUE)
+# \u7531 Cloudflare Worker \u751F\u6210\u4E8E ${(/* @__PURE__ */ new Date()).toISOString()}
+#
+# \u94FE\u8DEF: \u672C\u673A -> MASQUE \u63A5\u5165\u70B9 -> Opera \u843D\u5730 -> \u76EE\u6807
+# \u8282\u70B9\u540D "\u6B27\u6D321@198.1-443" = \u6B27\u6D32\u7B2C 1 \u4E2A\u843D\u5730\uFF0C\u7ECF 162.159.198.1:443 \u63A5\u5165\u3002
+#
+# \u63A5\u5165\u70B9 ${entries.length} \u4E2A x \u843D\u5730 ${opera.landings.length} \u4E2A = \u7EC4\u5408 ${combos} \u4E2A\u3002
+# \u4EFB\u4E00\u63A5\u5165\u70B9\u88AB\u5899\u6216\u4EFB\u4E00\u843D\u5730\u5931\u6548\uFF0C\u5176\u4ED6\u7EC4\u5408\u4ECD\u53EF\u7528\u3002
+#
+# \u9700\u8981 mihomo Alpha \u5206\u652F\uFF1A\u7A33\u5B9A\u7248\u6CA1\u6709 masque outbound\uFF0C\u4E5F\u4E0D\u8BA4 dialer-proxy\u3002
+# private-key \u7B49\u540C WARP \u8D26\u53F7\u51ED\u636E\uFF0C\u522B\u5916\u4F20\u3002
+
+${head(true)}
+
+proxies:
+${proxies.join("\n")}
+
+proxy-groups:
+  - name: \u{1F680} \u8282\u70B9\u9009\u62E9
+    type: select
+    proxies:
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+${p(locNames)}
+      - \u{1F504} \u6545\u969C\u8F6C\u79FB
+
+  - name: \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    lazy: true
+    proxies:
+${p(locNames)}
+
+  - name: \u{1F504} \u6545\u969C\u8F6C\u79FB
+    type: fallback
+    url: http://www.gstatic.com/generate_204
+    interval: 180
+    lazy: true
+    proxies:
+${p(locNames)}
+
+${locDefs}
+
+${tailGroups(locNames)}
+
+rule-providers:
+${prov}
+
+rules:
+${rules}
   - GEOIP,LAN,\u{1F3AF} \u5168\u7403\u76F4\u8FDE,no-resolve
   - GEOIP,CN,\u{1F3AF} \u5168\u7403\u76F4\u8FDE
   - MATCH,\u{1F41F} \u6F0F\u7F51\u4E4B\u9C7C
@@ -872,7 +946,7 @@ async function go(e){
 <\/script>
 </body></html>`;
 }
-function renderUI(state, host, sp, token, cred) {
+function renderUI(state, host, sp, spMq, token, cred) {
   const s = state || {};
   const warp = s.warp || {};
   const stat = s.stats || {};
@@ -883,6 +957,7 @@ function renderUI(state, host, sp, token, cred) {
   const leftTxt = left === null ? "\u2014" : left <= 0 ? "\u5DF2\u8FC7\u671F\uFF0C\u4E0B\u6B21\u8BBF\u95EE\u8BA2\u9605\u65F6\u81EA\u52A8\u91CD\u5EFA" : `${Math.floor(left / 60)} \u5C0F\u65F6 ${left % 60} \u5206\u540E\u8FC7\u671F`;
   const fmt = (d) => d ? d.toISOString().replace("T", " ").slice(0, 19) + " UTC" : "\u2014";
   const sub = `https://${host}${sp}?token=${token}`;
+  const subMq = `https://${host}${spMq}?token=${token}`;
   const row = (k, v, cls = "") => `<div class="row"><span class="k">${k}</span><span class="v ${cls}">${v}</span></div>`;
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head>
@@ -965,11 +1040,27 @@ function renderUI(state, host, sp, token, cred) {
   <div class="body">
 
     <div class="sec">
-      <div class="sec-t">\u8BA2\u9605</div>
+      <div class="sec-t">\u8BA2\u9605 \xB7 \u5957\u5A03\uFF08\u6362\u51FA\u53E3\u56FD\u5BB6\uFF09</div>
       <div class="sub">
         <input id="u" value="${sub}" readonly>
-        <button onclick="cp()">\u590D\u5236</button>
+        <button onclick="cp('u')">\u590D\u5236</button>
         <button class="gh" onclick="location.href=document.getElementById('u').value">\u4E0B\u8F7D</button>
+      </div>
+      <div class="note">
+        \u8D70 MASQUE \u518D\u843D Opera\uFF0C\u51FA\u53E3\u662F\u65B0\u52A0\u5761 / \u8377\u5170 / \u7F8E\u56FD\u3002\u8282\u70B9\u591A\uFF0C\u672C\u673A\u770B\u4E0D\u5230 Opera \u5730\u5740\u3002
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">\u8BA2\u9605 \xB7 \u7EAF WARP</div>
+      <div class="sub">
+        <input id="umq" value="${subMq}" readonly>
+        <button onclick="cp('umq')">\u590D\u5236</button>
+        <button class="gh" onclick="location.href=document.getElementById('umq').value">\u4E0B\u8F7D</button>
+      </div>
+      <div class="note">
+        \u53EA\u8D70 MASQUE\uFF0C\u51FA\u53E3\u662F Cloudflare \u81EA\u5DF1\u7684 IP\uFF0C\u4EFB\u64AD\u5C31\u8FD1\u843D\u5730\u3001<b>\u9009\u4E0D\u4E86\u56FD\u5BB6</b>\u3002
+        \u8282\u70B9\u5C11\u5EF6\u8FDF\u4F4E\uFF0C\u4E0D\u4F9D\u8D56 dialer-proxy\u3002
       </div>
       <div id="msg"></div>
     </div>
@@ -1020,8 +1111,13 @@ function renderUI(state, host, sp, token, cred) {
       <div class="sec-t">\u8BA2\u9605\u8DEF\u5F84</div>
       <div class="sub">
         <input id="sp" value="${sp.replace(/^\//, "")}" spellcheck="false"
-               placeholder="\u5B57\u6BCD\u6570\u5B57\u548C - _">
-        <button onclick="setPath()">\u4FDD\u5B58</button>
+               placeholder="\u5957\u5A03\u8BA2\u9605\u8DEF\u5F84">
+        <button onclick="setPath('sp')">\u4FDD\u5B58</button>
+      </div>
+      <div class="sub">
+        <input id="spmq" value="${spMq.replace(/^\//, "")}" spellcheck="false"
+               placeholder="\u7EAF WARP \u8BA2\u9605\u8DEF\u5F84">
+        <button onclick="setPath('spmq')">\u4FDD\u5B58</button>
       </div>
       <div class="note">
         \u6539\u6210\u96BE\u731C\u7684\u5B57\u7B26\u4E32\uFF0C\u7B49\u4E8E\u5728\u5BC6\u7801\u4E4B\u5916\u591A\u4E00\u5C42\u3002\u6539\u5B8C\u4E0A\u9762\u7684\u8BA2\u9605\u94FE\u63A5\u8981\u91CD\u65B0\u590D\u5236\u3002
@@ -1047,7 +1143,7 @@ function renderUI(state, host, sp, token, cred) {
       <div class="note">
         \u5FC5\u987B\u7528 <b>mihomo Alpha</b> \u5185\u6838\uFF0Cmasque \u51FA\u7AD9\u548C dialer-proxy \u7A33\u5B9A\u7248\u90FD\u4E0D\u652F\u6301\u3002<br>
         \u53EF\u7528\u5BA2\u6237\u7AEF\uFF1AClash Verge Rev\uFF08\u5185\u6838\u5207 Alpha\uFF09\u3001ClashMi\u3001FlClash\u3002<br>
-        Shadowrocket\u3001Stash \u4E0D\u8BA4 dialer-proxy\u3002<br>
+        Shadowrocket\u3001Stash \u4E0D\u8BA4 dialer-proxy\uFF0C<b>\u53EA\u80FD\u7528\u7EAF WARP \u90A3\u6761</b>\u3002<br>
         \u8BA2\u9605\u94FE\u63A5\u91CC\u7684 token \u5C31\u662F\u8BBF\u95EE\u51ED\u8BC1\uFF0C<b>\u522B\u5916\u4F20</b>\uFF0C\u6CC4\u9732\u4E86\u6539\u5BC6\u7801\u5373\u53EF\u5168\u90E8\u5931\u6548\u3002<br>
         \u914D\u7F6E\u91CC\u7684 private-key \u7B49\u540C WARP \u8D26\u53F7\u51ED\u636E\u3002<br>
         \u514D\u8D39\u4EE3\u7406\u7684\u6D41\u91CF\u5BF9\u63D0\u4F9B\u65B9\u53EF\u89C1\uFF0C\u522B\u8D70\u652F\u4ED8\u548C\u654F\u611F\u6570\u636E\u3002
@@ -1062,8 +1158,8 @@ function renderUI(state, host, sp, token, cred) {
   </div>
 </div>
 <script>
-function cp(){
-  const el=document.getElementById('u');
+function cp(id){
+  const el=document.getElementById(id||'u');
   navigator.clipboard.writeText(el.value).then(
     ()=>say('\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F','var(--mint)'),
     ()=>{el.select();document.execCommand('copy');say('\u5DF2\u590D\u5236','var(--mint)')});
@@ -1085,10 +1181,10 @@ async function post(url,body,okmsg){
     else{say('\u5931\u8D25: '+j.error,'var(--red)');bs.forEach(b=>b.disabled=false);}
   }catch(e){say('\u5931\u8D25: '+e.message,'var(--red)');bs.forEach(b=>b.disabled=false);}
 }
-function setPath(){
-  const v=document.getElementById('sp').value.trim();
+function setPath(id){
+  const v=document.getElementById(id).value.trim();
   if(!v){say('\u8DEF\u5F84\u4E0D\u80FD\u4E3A\u7A7A','var(--red)');return;}
-  post('/api/sub-path',{path:v},'\u5DF2\u4FDD\u5B58');
+  post('/api/sub-path',{path:v,which:id==='spmq'?'mq':'full'},'\u5DF2\u4FDD\u5B58');
 }
 function setPw(){
   const c0=document.getElementById('c0').value;
@@ -1200,8 +1296,8 @@ async function rateLimit(env, ip) {
 async function clearRateLimit(env, ip) {
   await env.KV.delete(`rl:${ip}`);
 }
-function normalizePath(p) {
-  const clean = String(p || "").trim().replace(/^\/+|\/+$/g, "");
+function normalizePath(p2) {
+  const clean = String(p2 || "").trim().replace(/^\/+|\/+$/g, "");
   if (!clean) return null;
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(clean)) return null;
   const reserved = ["login", "logout", "api", "setup"];
@@ -1212,6 +1308,7 @@ function normalizePath(p) {
 // src/index.js
 var K_WARP = "warp:device";
 var K_CFG = "config:yaml";
+var K_CFG_MQ = "config:masque";
 var K_STATE = "state:meta";
 var K_CRED = "auth:cred";
 var K_SET = "settings";
@@ -1219,6 +1316,7 @@ var K_CLAIM = "auth:claim";
 var K_LOCK = "rebuild:lock";
 var COOKIE = "om_session";
 var DEFAULT_SUB = "sub";
+var DEFAULT_SUB_MQ = "warp";
 var TTL_MS = 4 * 3600 * 1e3;
 var SKEW_MS = 10 * 60 * 1e3;
 var json = (o, s = 200) => new Response(JSON.stringify(o), {
@@ -1234,7 +1332,11 @@ var html = (body, s = 200) => new Response(body, {
 });
 var notFound = () => new Response("Not Found", { status: 404 });
 async function getSettings(env) {
-  return await env.KV.get(K_SET, "json") || { subPath: DEFAULT_SUB };
+  const s = await env.KV.get(K_SET, "json") || {};
+  return {
+    subPath: s.subPath || DEFAULT_SUB,
+    subPathMq: s.subPathMq || DEFAULT_SUB_MQ
+  };
 }
 async function getWarp(env, force = false) {
   if (!force) {
@@ -1249,6 +1351,7 @@ async function rebuild(env, { forceWarp = false } = {}) {
   const warp = await getWarp(env, forceWarp);
   const opera = await fetchOpera();
   const { yaml, entries, landings, combos } = buildConfig(warp, opera);
+  const mq = buildMasqueOnly(warp);
   const now = Date.now();
   const state = {
     updatedAt: new Date(now).toISOString(),
@@ -1262,6 +1365,7 @@ async function rebuild(env, { forceWarp = false } = {}) {
     }
   };
   await env.KV.put(K_CFG, yaml);
+  await env.KV.put(K_CFG_MQ, mq.yaml);
   await env.KV.put(K_STATE, JSON.stringify(state));
   return state;
 }
@@ -1269,9 +1373,9 @@ function isFresh(state) {
   if (!state || !state.expiresAt) return false;
   return Date.parse(state.expiresAt) - SKEW_MS > Date.now();
 }
-async function ensureConfig(env) {
+async function ensureConfig(env, key = K_CFG) {
   const state = await env.KV.get(K_STATE, "json");
-  const yaml = await env.KV.get(K_CFG);
+  const yaml = await env.KV.get(key);
   if (yaml && isFresh(state)) return yaml;
   const lock = await env.KV.get(K_LOCK);
   if (lock && Date.now() - Number(lock) < 9e4) {
@@ -1284,7 +1388,7 @@ async function ensureConfig(env) {
       await env.KV.delete(K_LOCK);
     }
   }
-  return await env.KV.get(K_CFG) || yaml;
+  return await env.KV.get(key) || yaml;
 }
 var index_default = {
   async fetch(req, env) {
@@ -1326,11 +1430,13 @@ var index_default = {
       return notFound();
     }
     const settings = await getSettings(env);
-    const subPath = "/" + (settings.subPath || DEFAULT_SUB);
-    if (path === subPath) {
+    const subPath = "/" + settings.subPath;
+    const subPathMq = "/" + settings.subPathMq;
+    if (path === subPath || path === subPathMq) {
       const t = url.searchParams.get("token") || "";
       if (!await verifyToken(cred, t) && !authed) return notFound();
-      const yaml = await ensureConfig(env);
+      const mqOnly = path === subPathMq;
+      const yaml = await ensureConfig(env, mqOnly ? K_CFG_MQ : K_CFG);
       if (!yaml) {
         return new Response(
           "\u914D\u7F6E\u751F\u6210\u5931\u8D25\uFF0C\u7A0D\u540E\u91CD\u8BD5\u6216\u5230\u7BA1\u7406\u9875\u624B\u52A8\u5237\u65B0",
@@ -1340,7 +1446,7 @@ var index_default = {
       return new Response(yaml, {
         headers: {
           "content-type": "text/yaml; charset=utf-8",
-          "content-disposition": 'attachment; filename="opera-masque.yaml"',
+          "content-disposition": `attachment; filename="${mqOnly ? "warp-masque" : "opera-masque"}.yaml"`,
           "profile-update-interval": "4",
           "cache-control": "no-store"
         }
@@ -1376,7 +1482,7 @@ var index_default = {
       if (!authed) return html(renderLogin());
       const state = await env.KV.get(K_STATE, "json");
       const token = await signToken(cred);
-      return html(renderUI(state, url.host, subPath, token, cred));
+      return html(renderUI(state, url.host, subPath, subPathMq, token, cred));
     }
     if (!authed) return notFound();
     if (path === "/api/state") {
@@ -1384,15 +1490,22 @@ var index_default = {
     }
     if (path === "/api/sub-path" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
-      const p = normalizePath(body.path);
-      if (!p) {
+      const p2 = normalizePath(body.path);
+      if (!p2) {
         return json({
           ok: false,
           error: "\u53EA\u80FD\u7528\u5B57\u6BCD\u6570\u5B57\u548C - _\uFF0C1-64 \u4F4D\uFF0C\u4E14\u4E0D\u80FD\u662F login/logout/api/setup"
         }, 400);
       }
-      await env.KV.put(K_SET, JSON.stringify({ ...settings, subPath: p }));
-      return json({ ok: true, msg: `\u8BA2\u9605\u8DEF\u5F84\u5DF2\u6539\u4E3A /${p}` });
+      const mq = body.which === "mq";
+      const other = mq ? settings.subPath : settings.subPathMq;
+      if (p2 === other) {
+        return json({ ok: false, error: "\u4E24\u6761\u8BA2\u9605\u8DEF\u5F84\u4E0D\u80FD\u4E00\u6837" }, 400);
+      }
+      await env.KV.put(K_SET, JSON.stringify(
+        mq ? { ...settings, subPathMq: p2 } : { ...settings, subPath: p2 }
+      ));
+      return json({ ok: true, msg: `\u8DEF\u5F84\u5DF2\u6539\u4E3A /${p2}` });
     }
     if (path === "/api/password" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
