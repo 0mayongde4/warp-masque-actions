@@ -1,0 +1,1168 @@
+// Opera VPN over Cloudflare WARP (MASQUE) —— 单文件版\n// 由 src/ 打包而成，网页部署用。改代码请改 src/ 后重新 npm run build。\n// 仓库 https://github.com/byJoey/warp-masque-actions\n
+
+// src/warp.js
+var API = "https://api.cloudflareclient.com/v0a4471";
+var H = {
+  "User-Agent": "WARP for Android",
+  "CF-Client-Version": "a-6.35-4471",
+  "Content-Type": "application/json; charset=UTF-8"
+};
+var b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+function randB64(n) {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  return btoa(String.fromCharCode(...a));
+}
+function randHex(n) {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  return [...a].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function cfTime() {
+  return (/* @__PURE__ */ new Date()).toISOString().replace("Z", "+00:00");
+}
+async function registerWarp(deviceName = "cf-worker") {
+  const reg = await fetch(`${API}/reg`, {
+    method: "POST",
+    headers: H,
+    body: JSON.stringify({
+      key: randB64(32),
+      install_id: "",
+      fcm_token: "",
+      tos: cfTime(),
+      model: "PC",
+      serial_number: randHex(8),
+      os_version: "",
+      key_type: "curve25519",
+      tunnel_type: "wireguard",
+      locale: "en-US"
+    })
+  });
+  if (!reg.ok) {
+    throw new Error(`WARP \u6CE8\u518C\u5931\u8D25 ${reg.status}: ${(await reg.text()).slice(0, 200)}`);
+  }
+  const acc = await reg.json();
+  const kp = await crypto.subtle.generateKey(
+    { name: "ECDSA", namedCurve: "P-256" },
+    true,
+    ["sign", "verify"]
+  );
+  const spki = b64(await crypto.subtle.exportKey("spki", kp.publicKey));
+  const pkcs8 = b64(await crypto.subtle.exportKey("pkcs8", kp.privateKey));
+  const sec1 = pkcs8ToSec1(pkcs8);
+  const patch = await fetch(`${API}/reg/${acc.id}`, {
+    method: "PATCH",
+    headers: { ...H, Authorization: `Bearer ${acc.token}` },
+    body: JSON.stringify({
+      key: spki,
+      key_type: "secp256r1",
+      tunnel_type: "masque",
+      name: deviceName
+    })
+  });
+  if (!patch.ok) {
+    throw new Error(`MASQUE enroll \u5931\u8D25 ${patch.status}: ${(await patch.text()).slice(0, 200)}`);
+  }
+  const up = await patch.json();
+  const pem = up.config?.peers?.[0]?.public_key || "";
+  const peerPub = pem.includes("-----") ? pem.split("\n").filter((l) => l && !l.startsWith("-----")).join("") : pem;
+  return {
+    deviceId: acc.id,
+    token: acc.token,
+    privateKey: sec1,
+    peerPublicKey: peerPub,
+    ipv4: up.config?.interface?.addresses?.v4 || acc.config?.interface?.addresses?.v4,
+    ipv6: up.config?.interface?.addresses?.v6 || acc.config?.interface?.addresses?.v6,
+    registeredAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+function pkcs8ToSec1(b64pkcs8) {
+  const der = Uint8Array.from(atob(b64pkcs8), (c) => c.charCodeAt(0));
+  const tlv = (pos) => {
+    const tag2 = der[pos];
+    let len2 = der[pos + 1];
+    let p = pos + 2;
+    if (len2 & 128) {
+      const n = len2 & 127;
+      len2 = 0;
+      for (let k = 0; k < n; k++) len2 = len2 << 8 | der[p + k];
+      p += n;
+    }
+    return [tag2, p, len2, p + len2];
+  };
+  let i = tlv(0)[1];
+  i = tlv(i)[3];
+  i = tlv(i)[3];
+  const [tag, start, len] = tlv(i);
+  if (tag !== 4) throw new Error("PKCS8 \u7ED3\u6784\u4E0D\u7B26\u5408\u9884\u671F");
+  const inner = der.subarray(start, start + len);
+  let j = tlv2(inner, 0)[1];
+  j = tlv2(inner, j)[3];
+  const [ptag, pstart, plen] = tlv2(inner, j);
+  if (ptag !== 4) throw new Error("SEC1 \u7ED3\u6784\u4E0D\u7B26\u5408\u9884\u671F");
+  const rawKey = inner.subarray(pstart, pstart + plen);
+  const oid = [6, 8, 42, 134, 72, 206, 61, 3, 1, 7];
+  const body = [
+    2,
+    1,
+    1,
+    // version = 1
+    4,
+    rawKey.length,
+    ...rawKey,
+    // privateKey
+    160,
+    oid.length,
+    ...oid
+    // [0] namedCurve
+  ];
+  const out = [48, ...derLen(body.length), ...body];
+  return btoa(String.fromCharCode(...out));
+}
+function tlv2(buf, pos) {
+  const tag = buf[pos];
+  let len = buf[pos + 1];
+  let p = pos + 2;
+  if (len & 128) {
+    const n = len & 127;
+    len = 0;
+    for (let k = 0; k < n; k++) len = len << 8 | buf[p + k];
+    p += n;
+  }
+  return [tag, p, len, p + len];
+}
+function derLen(n) {
+  if (n < 128) return [n];
+  if (n < 256) return [129, n];
+  return [130, n >> 8, n & 255];
+}
+
+// src/md5.js
+function md5Hex(str) {
+  const msg = new TextEncoder().encode(str);
+  const S = [
+    7,
+    12,
+    17,
+    22,
+    7,
+    12,
+    17,
+    22,
+    7,
+    12,
+    17,
+    22,
+    7,
+    12,
+    17,
+    22,
+    5,
+    9,
+    14,
+    20,
+    5,
+    9,
+    14,
+    20,
+    5,
+    9,
+    14,
+    20,
+    5,
+    9,
+    14,
+    20,
+    4,
+    11,
+    16,
+    23,
+    4,
+    11,
+    16,
+    23,
+    4,
+    11,
+    16,
+    23,
+    4,
+    11,
+    16,
+    23,
+    6,
+    10,
+    15,
+    21,
+    6,
+    10,
+    15,
+    21,
+    6,
+    10,
+    15,
+    21,
+    6,
+    10,
+    15,
+    21
+  ];
+  const K = new Uint32Array(64);
+  for (let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296);
+  const len = msg.length;
+  const withOne = len + 1;
+  const padLen = withOne + 8 + 63 & ~63;
+  const buf = new Uint8Array(padLen);
+  buf.set(msg);
+  buf[len] = 128;
+  const dv = new DataView(buf.buffer);
+  dv.setUint32(padLen - 8, len << 3 >>> 0, true);
+  dv.setUint32(padLen - 4, Math.floor(len / 536870912), true);
+  let a0 = 1732584193, b0 = 4023233417, c0 = 2562383102, d0 = 271733878;
+  const rol = (x, c) => x << c | x >>> 32 - c;
+  for (let off = 0; off < padLen; off += 64) {
+    const M = new Uint32Array(16);
+    for (let i = 0; i < 16; i++) M[i] = dv.getUint32(off + i * 4, true);
+    let A = a0, B = b0, C = c0, D = d0;
+    for (let i = 0; i < 64; i++) {
+      let F, g;
+      if (i < 16) {
+        F = B & C | ~B & D;
+        g = i;
+      } else if (i < 32) {
+        F = D & B | ~D & C;
+        g = (5 * i + 1) % 16;
+      } else if (i < 48) {
+        F = B ^ C ^ D;
+        g = (3 * i + 5) % 16;
+      } else {
+        F = C ^ (B | ~D);
+        g = 7 * i % 16;
+      }
+      F = F + A + K[i] + M[g] >>> 0;
+      A = D;
+      D = C;
+      C = B;
+      B = B + rol(F, S[i]) >>> 0;
+    }
+    a0 = a0 + A >>> 0;
+    b0 = b0 + B >>> 0;
+    c0 = c0 + C >>> 0;
+    d0 = d0 + D >>> 0;
+  }
+  const out = new Uint8Array(16);
+  const odv = new DataView(out.buffer);
+  odv.setUint32(0, a0, true);
+  odv.setUint32(4, b0, true);
+  odv.setUint32(8, c0, true);
+  odv.setUint32(12, d0, true);
+  return [...out].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// src/opera.js
+var EP = "https://api2.sec-tunnel.com/v4";
+var API_USER = "se0316";
+var API_PASS = "SILrMEPBmJuhomxWkfm3JalqHX2Eheg1YhlEZiMh8II";
+var CLIENT_TYPE = "se0316";
+var H2 = {
+  "SE-Client-Version": "Stable 114.0.5282.21",
+  "SE-Operating-System": "Windows",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 OPR/114.0.0.0",
+  "Content-Type": "application/x-www-form-urlencoded",
+  "Accept": "application/json"
+};
+var REGIONS = { AS: "\u4E9A\u6D32", EU: "\u6B27\u6D32", AM: "\u7F8E\u6D32" };
+async function sha1Upper(s) {
+  const d = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(s));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+function randHex2(n) {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  return [...a].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+var Session = class {
+  constructor() {
+    this.jar = "";
+  }
+  _absorb(r) {
+    const sc = r.headers.getSetCookie?.() || [];
+    if (sc.length) this.jar = sc.map((c) => c.split(";")[0]).join("; ");
+  }
+  async rpc(path, params) {
+    const url = `${EP}/${path}`;
+    const body = new URLSearchParams(params).toString();
+    const base = () => ({ ...H2, ...this.jar ? { Cookie: this.jar } : {} });
+    let r = await fetch(url, { method: "POST", headers: base(), body });
+    if (r.status === 401) {
+      const wa = r.headers.get("www-authenticate") || "";
+      const g = (k) => (wa.match(new RegExp(`${k}="([^"]*)"`)) || [])[1] || "";
+      const realm = g("realm"), nonce = g("nonce"), qop = g("qop"), opaque = g("opaque");
+      const uri = new URL(url).pathname;
+      const cnonce = randHex2(8), nc = "00000001";
+      const ha1 = md5Hex(`${API_USER}:${realm}:${API_PASS}`);
+      const ha2 = md5Hex(`POST:${uri}`);
+      const q = qop ? qop.split(",")[0].trim() : "";
+      const resp = q ? md5Hex(`${ha1}:${nonce}:${nc}:${cnonce}:${q}:${ha2}`) : md5Hex(`${ha1}:${nonce}:${ha2}`);
+      let a = `Digest username="${API_USER}", realm="${realm}", nonce="${nonce}", uri="${uri}", response="${resp}"`;
+      if (q) a += `, qop=${q}, nc=${nc}, cnonce="${cnonce}"`;
+      if (opaque) a += `, opaque="${opaque}"`;
+      this._absorb(r);
+      r = await fetch(url, {
+        method: "POST",
+        headers: { ...base(), Authorization: a },
+        body
+      });
+    }
+    this._absorb(r);
+    if (!r.ok) throw new Error(`${path} HTTP ${r.status}`);
+    const j = await r.json();
+    if (j.status && j.status.code !== 0) {
+      throw new Error(`${path} code=${j.status.code} ${j.status.message || ""}`);
+    }
+    return j;
+  }
+};
+async function fetchOpera() {
+  const s = new Session();
+  const email = `${randHex2(10)}@${CLIENT_TYPE}.best.vpn`;
+  await s.rpc("register_subscriber", { email, password: await sha1Upper(email) });
+  const dev = await s.rpc("register_device", {
+    client_type: CLIENT_TYPE,
+    device_hash: randHex2(20).toUpperCase(),
+    device_name: "Opera-Browser-Client"
+  });
+  const deviceId = dev.data.device_id;
+  const idHash = await sha1Upper(deviceId);
+  const gp = await s.rpc("device_generate_password", { device_id: deviceId });
+  const password = gp.data.device_password;
+  const landings = [];
+  for (const [code, loc] of Object.entries(REGIONS)) {
+    let disc;
+    try {
+      disc = await s.rpc("discover", { serial_no: idHash, requested_geo: code });
+    } catch {
+      continue;
+    }
+    let seq = 0;
+    for (const x of disc.data.ips || []) {
+      seq += 1;
+      landings.push({
+        tag: `${loc}${seq}`,
+        loc,
+        ip: x.ip,
+        port: x.port && x.port[0] || 443,
+        host: `${code.toLowerCase()}${seq - 1}.sec-tunnel.com`
+      });
+    }
+  }
+  return { username: idHash, password, landings, fetchedAt: (/* @__PURE__ */ new Date()).toISOString() };
+}
+
+// src/config.js
+var V4 = ["162.159.198.1", "162.159.198.2", "162.159.199.1", "162.159.199.2"];
+var V6 = [
+  "2606:4700:103::1",
+  "2606:4700:103::2",
+  "2606:4700:104::1",
+  "2606:4700:104::2"
+];
+var PORTS = [443, 500, 1701, 4500, 8443];
+var OFFICIAL_SNI = "zt-masque.cloudflareclient.com";
+var SNI_NODE = ["162.159.198.1", 443];
+var RS = "https://raw.githubusercontent.com";
+var RULESETS = [
+  ["\u{1F3AF} \u5168\u7403\u76F4\u8FDE", RS + "/cmliu/ACL4SSR/refs/heads/main/Clash/CFnat.list"],
+  ["\u{1F3AF} \u5168\u7403\u76F4\u8FDE", RS + "/ACL4SSR/ACL4SSR/master/Clash/LocalAreaNetwork.list"],
+  ["\u{1F3AF} \u5168\u7403\u76F4\u8FDE", RS + "/ACL4SSR/ACL4SSR/master/Clash/UnBan.list"],
+  ["\u{1F6D1} \u5168\u7403\u62E6\u622A", RS + "/ACL4SSR/ACL4SSR/master/Clash/BanAD.list"],
+  ["\u{1F343} \u5E94\u7528\u51C0\u5316", RS + "/ACL4SSR/ACL4SSR/master/Clash/BanProgramAD.list"],
+  ["\u{1F343} \u5E94\u7528\u51C0\u5316", RS + "/cmliu/ACL4SSR/main/Clash/adobe.list"],
+  ["\u{1F343} \u5E94\u7528\u51C0\u5316", RS + "/cmliu/ACL4SSR/main/Clash/IDM.list"],
+  ["\u{1F4E2} \u8C37\u6B4CFCM", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/GoogleFCM.list"],
+  ["\u{1F3AF} \u5168\u7403\u76F4\u8FDE", RS + "/ACL4SSR/ACL4SSR/master/Clash/GoogleCN.list"],
+  ["\u{1F3AF} \u5168\u7403\u76F4\u8FDE", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/SteamCN.list"],
+  ["\u24C2\uFE0F \u5FAE\u8F6F\u670D\u52A1", RS + "/ACL4SSR/ACL4SSR/master/Clash/Microsoft.list"],
+  ["\u{1F34E} \u82F9\u679C\u670D\u52A1", RS + "/ACL4SSR/ACL4SSR/master/Clash/Apple.list"],
+  ["\u{1F4F2} \u7535\u62A5\u4FE1\u606F", RS + "/ACL4SSR/ACL4SSR/master/Clash/Telegram.list"],
+  ["\u{1F916} OpenAi", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list"],
+  ["\u{1F916} OpenAi", RS + "/juewuy/ShellClash/master/rules/ai.list"],
+  ["\u{1F916} OpenAi", RS + "/cmliu/ACL4SSR/main/Clash/Copilot.list"],
+  ["\u{1F916} OpenAi", RS + "/cmliu/ACL4SSR/main/Clash/GithubCopilot.list"],
+  ["\u{1F916} OpenAi", RS + "/cmliu/ACL4SSR/main/Clash/Claude.list"],
+  ["\u{1F4F9} \u6CB9\u7BA1\u89C6\u9891", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/YouTube.list"],
+  ["\u{1F3A5} \u5948\u98DE\u89C6\u9891", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Netflix.list"],
+  ["\u{1F30D} \u56FD\u5916\u5A92\u4F53", RS + "/ACL4SSR/ACL4SSR/master/Clash/ProxyMedia.list"],
+  ["\u{1F30D} \u56FD\u5916\u5A92\u4F53", RS + "/cmliu/ACL4SSR/main/Clash/Emby.list"],
+  ["\u{1F680} \u8282\u70B9\u9009\u62E9", RS + "/ACL4SSR/ACL4SSR/master/Clash/ProxyLite.list"],
+  ["\u{1F680} \u8282\u70B9\u9009\u62E9", RS + "/cmliu/ACL4SSR/main/Clash/CMBlog.list"],
+  ["\u{1F3AF} \u5168\u7403\u76F4\u8FDE", RS + "/ACL4SSR/ACL4SSR/master/Clash/ChinaDomain.list"],
+  ["\u{1F3AF} \u5168\u7403\u76F4\u8FDE", RS + "/ACL4SSR/ACL4SSR/master/Clash/ChinaCompanyIp.list"]
+];
+function entryName(ip, port) {
+  if (ip.includes(":")) {
+    const parts = ip.split(":");
+    return `v6-${parts[2]}-${parts[parts.length - 1]}-${port}`;
+  }
+  return `${ip.split(".").slice(2).join(".")}-${port}`;
+}
+function masqueNode(name, ip, port, priv, pub, v4, v6, sni) {
+  const srv = ip.includes(":") ? `"${ip}"` : ip;
+  const extra = sni ? `
+    sni: ${sni}` : "";
+  return `  - name: ${name}
+    type: masque
+    server: ${srv}
+    port: ${port}${extra}
+    private-key: ${priv}
+    public-key: ${pub}
+    ip: ${v4}
+    ipv6: ${v6}
+    mtu: 1280
+    udp: true
+    remote-dns-resolve: true
+    dns: [1.1.1.1, 2606:4700:4700::1111]`;
+}
+function buildConfig(warp, opera) {
+  const { privateKey: priv, peerPublicKey: pub, ipv4: v4, ipv6: v6 } = warp;
+  const entries = [];
+  const proxies = [];
+  for (const ip of [...V4, ...V6]) {
+    for (const port of PORTS) {
+      const n = entryName(ip, port);
+      entries.push(n);
+      proxies.push(masqueNode(n, ip, port, priv, pub, v4, v6));
+    }
+  }
+  entries.push("\u5B98\u65B9\u57DF\u540D");
+  proxies.push(masqueNode(
+    "\u5B98\u65B9\u57DF\u540D",
+    SNI_NODE[0],
+    SNI_NODE[1],
+    priv,
+    pub,
+    v4,
+    v6,
+    OFFICIAL_SNI
+  ));
+  const byLoc = {};
+  for (const land of opera.landings) {
+    for (const ent of entries) {
+      const name = `${land.tag}@${ent}`;
+      (byLoc[land.loc] ||= []).push(name);
+      proxies.push(
+        `  - {name: "${name}", type: http, server: ${land.ip}, port: ${land.port}, username: ${opera.username}, password: ${opera.password}, tls: true, sni: ${land.host}, skip-cert-verify: false, dialer-proxy: ${ent}}`
+      );
+    }
+  }
+  const combos = Object.values(byLoc).reduce((a, b) => a + b.length, 0);
+  const q = (a, n = 6) => a.map((x) => " ".repeat(n) + `- "${x}"`).join("\n");
+  const p = (a, n = 6) => a.map((x) => " ".repeat(n) + `- ${x}`).join("\n");
+  const locNames = Object.keys(byLoc).map((l) => `${l}\u7EBF\u8DEF`);
+  const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}\u7EBF\u8DEF
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 80
+    lazy: true
+    proxies:
+${q(tags)}`).join("\n\n");
+  const prov = [], rules = [];
+  RULESETS.forEach(([group, url], i) => {
+    const pn = `rule${String(i).padStart(2, "0")}`;
+    prov.push(`  ${pn}:
+    type: http
+    behavior: classical
+    format: text
+    interval: 86400
+    url: ${url}
+    path: ./ruleset/${pn}.list`);
+    rules.push(`  - RULE-SET,${pn},${group}`);
+  });
+  const yaml = `# Opera VPN over Cloudflare WARP (MASQUE)
+# \u7531 Cloudflare Worker \u81EA\u52A8\u751F\u6210\u4E8E ${(/* @__PURE__ */ new Date()).toISOString()}
+#
+# \u94FE\u8DEF: \u672C\u673A -> MASQUE \u63A5\u5165\u70B9 -> Opera \u843D\u5730 -> \u76EE\u6807
+# \u8282\u70B9\u540D "\u6B27\u6D321@198.1-443" = \u6B27\u6D32\u7B2C 1 \u4E2A\u843D\u5730\uFF0C\u7ECF 162.159.198.1:443 \u63A5\u5165\u3002
+#
+# \u63A5\u5165\u70B9 ${entries.length} \u4E2A x \u843D\u5730 ${opera.landings.length} \u4E2A = \u7EC4\u5408 ${combos} \u4E2A\u3002
+# \u4EFB\u4E00\u63A5\u5165\u70B9\u88AB\u5899\u6216\u4EFB\u4E00\u843D\u5730\u5931\u6548\uFF0C\u5176\u4ED6\u7EC4\u5408\u4ECD\u53EF\u7528\u3002
+#
+# \u9700\u8981 mihomo Alpha \u5206\u652F\uFF1A\u7A33\u5B9A\u7248\u6CA1\u6709 masque outbound\u3002
+# private-key \u7B49\u540C WARP \u8D26\u53F7\u51ED\u636E\uFF0C\u522B\u5916\u4F20\u3002
+
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: true
+unified-delay: true
+tcp-concurrent: true
+find-process-mode: 'off'
+external-controller: 127.0.0.1:9090
+
+profile:
+  store-selected: true
+  store-fake-ip: true
+
+sniffer:
+  enable: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+      override-destination: true
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+  skip-domain:
+    - '+.push.apple.com'
+    - '+.apple.com'
+
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  ipv6: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - '+.lan'
+    - '+.local'
+    - '*.msftconnecttest.com'
+    - '*.msftncsi.com'
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  nameserver:
+    - https://223.5.5.5/dns-query
+    - https://1.12.12.12/dns-query
+  proxy-server-nameserver:
+    - https://223.5.5.5/dns-query
+  nameserver-policy:
+    'geosite:cn,private':
+      - https://223.5.5.5/dns-query
+      - https://1.12.12.12/dns-query
+    'geosite:geolocation-!cn':
+      - https://1.1.1.1/dns-query
+      - https://8.8.8.8/dns-query
+
+proxies:
+${proxies.join("\n")}
+
+proxy-groups:
+  - name: \u{1F680} \u8282\u70B9\u9009\u62E9
+    type: select
+    proxies:
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+${p(locNames)}
+      - \u{1F504} \u6545\u969C\u8F6C\u79FB
+
+  - name: \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    lazy: true
+    proxies:
+${p(locNames)}
+
+  - name: \u{1F504} \u6545\u969C\u8F6C\u79FB
+    type: fallback
+    url: http://www.gstatic.com/generate_204
+    interval: 180
+    lazy: true
+    proxies:
+${p(locNames)}
+
+${locDefs}
+
+  - name: \u{1F4F9} \u6CB9\u7BA1\u89C6\u9891
+    type: select
+    proxies:
+      - \u{1F680} \u8282\u70B9\u9009\u62E9
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+      - \u{1F504} \u6545\u969C\u8F6C\u79FB
+${p(locNames)}
+
+  - name: \u{1F3A5} \u5948\u98DE\u89C6\u9891
+    type: select
+    proxies:
+      - \u{1F680} \u8282\u70B9\u9009\u62E9
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+      - \u{1F504} \u6545\u969C\u8F6C\u79FB
+${p(locNames)}
+
+  - name: \u{1F30D} \u56FD\u5916\u5A92\u4F53
+    type: select
+    proxies:
+      - \u{1F680} \u8282\u70B9\u9009\u62E9
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+      - \u{1F504} \u6545\u969C\u8F6C\u79FB
+      - \u{1F3AF} \u5168\u7403\u76F4\u8FDE
+
+  - name: \u{1F4F2} \u7535\u62A5\u4FE1\u606F
+    type: select
+    proxies:
+      - \u{1F680} \u8282\u70B9\u9009\u62E9
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+      - \u{1F3AF} \u5168\u7403\u76F4\u8FDE
+
+  - name: \u{1F916} OpenAi
+    type: select
+    proxies:
+      - \u{1F680} \u8282\u70B9\u9009\u62E9
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+      - \u{1F504} \u6545\u969C\u8F6C\u79FB
+${p(locNames)}
+
+  - name: \u24C2\uFE0F \u5FAE\u8F6F\u670D\u52A1
+    type: select
+    proxies:
+      - \u{1F3AF} \u5168\u7403\u76F4\u8FDE
+      - \u{1F680} \u8282\u70B9\u9009\u62E9
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+
+  - name: \u{1F34E} \u82F9\u679C\u670D\u52A1
+    type: select
+    proxies:
+      - \u{1F3AF} \u5168\u7403\u76F4\u8FDE
+      - \u{1F680} \u8282\u70B9\u9009\u62E9
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+
+  - name: \u{1F4E2} \u8C37\u6B4CFCM
+    type: select
+    proxies:
+      - \u{1F680} \u8282\u70B9\u9009\u62E9
+      - \u{1F3AF} \u5168\u7403\u76F4\u8FDE
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+
+  - name: \u{1F3AF} \u5168\u7403\u76F4\u8FDE
+    type: select
+    proxies:
+      - DIRECT
+      - \u{1F680} \u8282\u70B9\u9009\u62E9
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+
+  - name: \u{1F6D1} \u5168\u7403\u62E6\u622A
+    type: select
+    proxies:
+      - REJECT
+      - DIRECT
+
+  - name: \u{1F343} \u5E94\u7528\u51C0\u5316
+    type: select
+    proxies:
+      - REJECT
+      - DIRECT
+
+  - name: \u{1F41F} \u6F0F\u7F51\u4E4B\u9C7C
+    type: select
+    proxies:
+      - \u{1F680} \u8282\u70B9\u9009\u62E9
+      - \u{1F3AF} \u5168\u7403\u76F4\u8FDE
+      - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
+
+rule-providers:
+${prov.join("\n")}
+
+rules:
+${rules.join("\n")}
+  - GEOIP,LAN,\u{1F3AF} \u5168\u7403\u76F4\u8FDE,no-resolve
+  - GEOIP,CN,\u{1F3AF} \u5168\u7403\u76F4\u8FDE
+  - MATCH,\u{1F41F} \u6F0F\u7F51\u4E4B\u9C7C
+`;
+  return { yaml, entries: entries.length, landings: opera.landings.length, combos };
+}
+
+// src/ui.js
+var CSS = `
+:root{
+  --bg:#05030e; --bg2:#0a0820;
+  --cyan:#00f0ff; --pink:#ff2bd6; --purple:#a347ff;
+  --yellow:#fff200; --mint:#00ff9d; --red:#ff3860;
+  --text:#e6f5ff; --dim:#7aa9c4;
+  --border:rgba(0,240,255,.55); --grid:rgba(255,43,214,.16);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{overflow-x:hidden}
+html,body{min-height:100%}
+body{
+  font-family:"JetBrains Mono","Fira Code","Courier New",
+    "PingFang SC","Microsoft YaHei","Noto Sans SC",monospace;
+  background:radial-gradient(ellipse at 20% 10%,#2a0040 0%,var(--bg) 55%,#000 100%);
+  color:var(--text);
+  padding:32px 16px 56px;
+  display:flex;justify-content:center;
+  position:relative;overflow-x:hidden;
+}
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background:
+    linear-gradient(var(--grid) 1px,transparent 1px) 0 0/44px 44px,
+    linear-gradient(90deg,var(--grid) 1px,transparent 1px) 0 0/44px 44px;
+  opacity:.5;
+}
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:1;
+  background:repeating-linear-gradient(180deg,rgba(0,240,255,.05) 0 1px,transparent 1px 4px);
+}
+.term{
+  min-width:0;overflow:hidden;
+  border:1px solid var(--border);
+  background:rgba(8,4,28,.86);
+  box-shadow:0 0 24px rgba(0,240,255,.14),inset 0 0 60px rgba(163,71,255,.07);
+}
+.head{
+  display:flex;align-items:center;gap:12px;
+  padding:12px 16px;border-bottom:1px solid var(--border);
+  background:linear-gradient(90deg,rgba(255,43,214,.16),rgba(0,240,255,.16));
+}
+.dots{display:flex;gap:8px}
+.dot{width:11px;height:11px;transform:rotate(45deg);background:var(--pink);box-shadow:0 0 8px var(--pink)}
+.dot:nth-child(2){background:var(--yellow);box-shadow:0 0 8px var(--yellow)}
+.dot:nth-child(3){background:var(--mint);box-shadow:0 0 8px var(--mint)}
+.title{
+  color:var(--cyan);font-size:13px;font-weight:700;
+  letter-spacing:.25em;text-transform:uppercase;text-shadow:0 0 6px var(--cyan);
+}
+.title::before{content:"// ";color:var(--pink)}
+.body{padding:22px 20px;min-width:0}
+input{
+  background:rgba(0,0,0,.45);
+  border:1px solid var(--border);color:var(--cyan);
+  font-family:inherit;font-size:12px;padding:11px 12px;outline:none;
+  text-shadow:0 0 4px var(--cyan);
+}
+input:focus{border-color:var(--pink);box-shadow:0 0 12px rgba(255,43,214,.4)}
+button{
+  font-family:inherit;font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+  padding:11px 18px;cursor:pointer;
+  background:transparent;border:1px solid var(--pink);color:var(--pink);
+  text-shadow:0 0 6px var(--pink);transition:.15s;white-space:nowrap;
+}
+button:hover{background:var(--pink);color:#05030e;text-shadow:none;box-shadow:0 0 16px var(--pink)}
+button.gh{border-color:var(--cyan);color:var(--cyan);text-shadow:0 0 6px var(--cyan)}
+button.gh:hover{background:var(--cyan);color:#05030e;box-shadow:0 0 16px var(--cyan)}
+button:disabled{opacity:.4;cursor:not-allowed}
+#msg{margin-top:10px;font-size:12px;min-height:18px}
+`;
+function renderLogin(err) {
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OPERA // MASQUE</title>
+<style>${CSS}
+.wrap{width:100%;max-width:400px;position:relative;z-index:2;min-width:0;align-self:center}
+.f{display:flex;flex-direction:column;gap:12px}
+.hint{font-size:11px;color:var(--dim);line-height:1.8;margin-top:14px}
+</style></head>
+<body><div class="wrap"><div class="term">
+  <div class="head">
+    <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+    <div class="title">Auth Required</div>
+  </div>
+  <div class="body">
+    <form class="f" onsubmit="return go(event)">
+      <input type="password" id="p" placeholder="PASSWORD" autofocus autocomplete="current-password">
+      <button type="submit">\u8FDB\u5165</button>
+    </form>
+    <div id="msg"></div>
+    <div class="hint">\u5BC6\u7801\u7531\u90E8\u7F72\u8005\u7528 wrangler secret \u8BBE\u7F6E\u3002<br>\u8FDE\u7EED\u5931\u8D25 8 \u6B21\u4F1A\u9501\u5B9A 15 \u5206\u949F\u3002</div>
+  </div>
+</div></div>
+<script>
+async function go(e){
+  e.preventDefault();
+  const b=document.querySelector('button'), m=document.getElementById('msg');
+  b.disabled=true; m.textContent='> \u9A8C\u8BC1\u4E2D\u2026'; m.style.color='var(--yellow)';
+  try{
+    const r=await fetch('/login',{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({password:document.getElementById('p').value})});
+    const j=await r.json();
+    if(j.ok){m.textContent='> \u901A\u8FC7';m.style.color='var(--mint)';location.reload();}
+    else{m.textContent='> '+j.error;m.style.color='var(--red)';b.disabled=false;}
+  }catch(err){m.textContent='> '+err.message;m.style.color='var(--red)';b.disabled=false;}
+  return false;
+}
+<\/script>
+</body></html>`;
+}
+function renderUI(state, host, sp, token) {
+  const s = state || {};
+  const warp = s.warp || {};
+  const stat = s.stats || {};
+  const updated = s.updatedAt ? new Date(s.updatedAt) : null;
+  const ago = updated ? Math.floor((Date.now() - updated.getTime()) / 6e4) : null;
+  const next = updated ? new Date(updated.getTime() + 4 * 3600 * 1e3) : null;
+  const fmt = (d) => d ? d.toISOString().replace("T", " ").slice(0, 19) + " UTC" : "\u2014";
+  const sub = `https://${host}${sp}?token=${token}`;
+  const row = (k, v, cls = "") => `<div class="row"><span class="k">${k}</span><span class="v ${cls}">${v}</span></div>`;
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OPERA // MASQUE</title>
+<style>${CSS}
+.wrap{width:100%;max-width:880px;position:relative;z-index:2;min-width:0}
+.sec{margin-bottom:26px;min-width:0}
+.sec:last-child{margin-bottom:0}
+.sec-t{
+  color:var(--pink);font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+  margin-bottom:12px;text-shadow:0 0 6px var(--pink);
+}
+.sec-t::before{content:"\u258D";color:var(--cyan);margin-right:6px}
+.row{
+  display:flex;justify-content:space-between;align-items:baseline;gap:16px;
+  padding:7px 0;border-bottom:1px dashed rgba(0,240,255,.14);font-size:13px;
+}
+.row:last-child{border-bottom:none}
+.k{color:var(--dim);letter-spacing:.06em;white-space:nowrap}
+.v{color:var(--cyan);text-align:right;word-break:break-all}
+.v.ok{color:var(--mint);text-shadow:0 0 6px var(--mint)}
+.v.warn{color:var(--yellow);text-shadow:0 0 6px var(--yellow)}
+.v.err{color:var(--red);text-shadow:0 0 6px var(--red)}
+.grid{display:grid;min-width:0;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+.cell{
+  border:1px solid rgba(0,240,255,.3);padding:12px 14px;
+  background:rgba(0,240,255,.04);min-width:0;
+}
+.cell .n{font-size:26px;font-weight:700;color:var(--cyan);text-shadow:0 0 10px var(--cyan);line-height:1.1}
+.cell .l{font-size:10px;color:var(--dim);letter-spacing:.14em;text-transform:uppercase;margin-top:6px;
+  overflow-wrap:anywhere}
+.sub{display:flex;gap:8px;align-items:stretch;margin-top:4px;flex-wrap:wrap}
+.sub input{flex:1;min-width:0}
+.note{font-size:11px;color:var(--dim);line-height:1.85;margin-top:12px;
+  overflow-wrap:anywhere;word-break:break-word}
+.note b{color:var(--yellow);font-weight:400}
+.foot{
+  margin-top:18px;text-align:center;font-size:10px;color:var(--dim);
+  letter-spacing:.2em;text-transform:uppercase;
+}
+.foot a{color:var(--purple);text-decoration:none}
+.foot a:hover{color:var(--pink)}
+.head{position:relative}
+.out{
+  margin-left:auto;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--dim);text-decoration:none;border:1px solid rgba(122,169,196,.4);
+  padding:4px 10px;transition:.15s;
+}
+.out:hover{color:var(--red);border-color:var(--red);text-shadow:0 0 6px var(--red)}
+@media(max-width:560px){
+  body{padding:18px 10px 40px}
+  .row{flex-direction:column;gap:2px;font-size:12px}
+  .v{text-align:left}
+  .sub{flex-direction:column}
+  button{width:100%}
+  .grid{grid-template-columns:1fr 1fr;gap:8px}
+  .body{padding:16px 12px}
+  .note{letter-spacing:0;font-size:11px}
+  .title{font-size:10px;letter-spacing:.12em}
+  .k,.v{letter-spacing:0}
+  .cell .n{font-size:22px}
+  .cell .l{letter-spacing:.08em;font-size:9px}
+  .sec-t{letter-spacing:.14em}
+}
+@media(max-width:360px){
+  .grid{grid-template-columns:1fr}
+}
+</style></head>
+<body><div class="wrap"><div class="term">
+  <div class="head">
+    <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+    <div class="title">Opera over MASQUE</div>
+    <a class="out" href="/logout">\u9000\u51FA</a>
+  </div>
+  <div class="body">
+
+    <div class="sec">
+      <div class="sec-t">\u8BA2\u9605</div>
+      <div class="sub">
+        <input id="u" value="${sub}" readonly>
+        <button onclick="cp()">\u590D\u5236</button>
+        <button class="gh" onclick="location.href=document.getElementById('u').value">\u4E0B\u8F7D</button>
+      </div>
+      <div id="msg"></div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">\u8282\u70B9</div>
+      <div class="grid">
+        <div class="cell"><div class="n">${stat.combos ?? "\u2014"}</div><div class="l">\u7EC4\u5408\u8282\u70B9</div></div>
+        <div class="cell"><div class="n">${stat.entries ?? "\u2014"}</div><div class="l">MASQUE \u63A5\u5165\u70B9</div></div>
+        <div class="cell"><div class="n">${stat.landings ?? "\u2014"}</div><div class="l">Opera \u843D\u5730</div></div>
+      </div>
+      <div class="note">
+        \u6BCF\u4E2A\u843D\u5730\u548C\u6BCF\u4E2A\u63A5\u5165\u70B9\u90FD\u7EC4\u5408\u4E00\u904D\uFF0C\u4EFB\u4E00\u73AF\u5931\u6548\u90FD\u8FD8\u6709\u522B\u7684\u8DEF\u8D70\u3002<br>
+        \u8282\u70B9\u540D <b>\u6B27\u6D321@198.1-443</b> = \u6B27\u6D32\u7B2C 1 \u4E2A\u843D\u5730\uFF0C\u7ECF 162.159.198.1:443 \u63A5\u5165\u3002
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">\u72B6\u6001</div>
+      ${row(
+    "\u4E0A\u6B21\u66F4\u65B0",
+    updated ? `${fmt(updated)}\uFF08${ago} \u5206\u949F\u524D\uFF09` : "\u5C1A\u672A\u751F\u6210",
+    updated ? ago > 250 ? "warn" : "ok" : "err"
+  )}
+      ${row("\u4E0B\u6B21\u81EA\u52A8\u66F4\u65B0", fmt(next))}
+      ${row("\u66F4\u65B0\u5468\u671F", "\u6BCF 4 \u5C0F\u65F6")}
+      ${row("\u8BA2\u9605\u8DEF\u5F84", sp)}
+      ${row("WARP \u8BBE\u5907", warp.deviceId ? warp.deviceId.slice(0, 8) + "\u2026" : "\u2014")}
+      ${row("WARP \u6CE8\u518C\u4E8E", warp.registeredAt ? fmt(new Date(warp.registeredAt)) : "\u2014")}
+      ${row("\u5185\u7F51\u5730\u5740", warp.ipv4 || "\u2014")}
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">\u64CD\u4F5C</div>
+      <div class="sub">
+        <button onclick="go('/api/refresh')">\u5237\u65B0 Opera \u51ED\u636E</button>
+        <button class="gh" onclick="go('/api/reset-warp')">\u91CD\u6CE8\u518C WARP \u8BBE\u5907</button>
+      </div>
+      <div class="note">
+        Opera \u51ED\u636E\u662F\u533F\u540D\u6CE8\u518C\u7684\u4F1A\u8FC7\u671F\uFF0C\u8FDE\u4E0D\u4E0A\u5C31\u70B9\u5237\u65B0\u3002<br>
+        WARP \u8BBE\u5907\u4FE1\u606F\u5B58\u5728 KV \u91CC\u590D\u7528\uFF0C<b>\u4E00\u822C\u4E0D\u7528\u91CD\u6CE8\u518C</b>\uFF0C\u9664\u975E MASQUE \u6574\u4F53\u8FDE\u4E0D\u4E0A\u3002
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">\u987B\u77E5</div>
+      <div class="note">
+        \u5FC5\u987B\u7528 <b>mihomo Alpha</b> \u5185\u6838\uFF0Cmasque \u51FA\u7AD9\u548C dialer-proxy \u7A33\u5B9A\u7248\u90FD\u4E0D\u652F\u6301\u3002<br>
+        \u53EF\u7528\u5BA2\u6237\u7AEF\uFF1AClash Verge Rev\uFF08\u5185\u6838\u5207 Alpha\uFF09\u3001ClashMi\u3001FlClash\u3002<br>
+        Shadowrocket\u3001Stash \u4E0D\u8BA4 dialer-proxy\u3002<br>
+        \u8BA2\u9605\u94FE\u63A5\u91CC\u7684 token \u5C31\u662F\u8BBF\u95EE\u51ED\u8BC1\uFF0C<b>\u522B\u5916\u4F20</b>\uFF0C\u6CC4\u9732\u4E86\u6539\u5BC6\u7801\u5373\u53EF\u5168\u90E8\u5931\u6548\u3002<br>
+        \u914D\u7F6E\u91CC\u7684 private-key \u7B49\u540C WARP \u8D26\u53F7\u51ED\u636E\u3002<br>
+        \u514D\u8D39\u4EE3\u7406\u7684\u6D41\u91CF\u5BF9\u63D0\u4F9B\u65B9\u53EF\u89C1\uFF0C\u522B\u8D70\u652F\u4ED8\u548C\u654F\u611F\u6570\u636E\u3002
+      </div>
+    </div>
+
+  </div></div>
+  <div class="foot">
+    Cloudflare Worker \u30FB
+    <a href="https://github.com/byJoey/warp-masque-actions">GitHub</a> \u30FB
+    <a href="https://joeyblog.net">Blog</a>
+  </div>
+</div>
+<script>
+function cp(){
+  const el=document.getElementById('u');
+  navigator.clipboard.writeText(el.value).then(
+    ()=>say('\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F','var(--mint)'),
+    ()=>{el.select();document.execCommand('copy');say('\u5DF2\u590D\u5236','var(--mint)')});
+}
+function say(t,c){
+  const m=document.getElementById('msg');
+  m.textContent='> '+t; m.style.color=c;
+  setTimeout(()=>{m.textContent=''},4000);
+}
+async function go(p){
+  const bs=document.querySelectorAll('button');
+  bs.forEach(b=>b.disabled=true);
+  say('\u6267\u884C\u4E2D\u2026','var(--yellow)');
+  try{
+    const r=await fetch(p,{method:'POST'});
+    const j=await r.json();
+    if(j.ok){say(j.msg+'\uFF0C\u5373\u5C06\u5237\u65B0','var(--mint)');setTimeout(()=>location.reload(),1200);}
+    else{say('\u5931\u8D25: '+j.error,'var(--red)');bs.forEach(b=>b.disabled=false);}
+  }catch(e){say('\u5931\u8D25: '+e.message,'var(--red)');bs.forEach(b=>b.disabled=false);}
+}
+<\/script>
+</body></html>`;
+}
+
+// src/auth.js
+var enc = new TextEncoder();
+function safeEqual(a, b) {
+  const x = enc.encode(a || "");
+  const y = enc.encode(b || "");
+  const n = Math.max(x.length, y.length);
+  let diff = x.length ^ y.length;
+  for (let i = 0; i < n; i++) diff |= (x[i] || 0) ^ (y[i] || 0);
+  return diff === 0;
+}
+async function hmac(secret, msg) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(msg));
+  return btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+var TTL = 7 * 24 * 3600 * 1e3;
+async function signToken(secret) {
+  const exp = Date.now() + TTL;
+  return `${exp}.${await hmac(secret, String(exp))}`;
+}
+async function verifyToken(secret, token) {
+  if (!token || !token.includes(".")) return false;
+  const i = token.lastIndexOf(".");
+  const exp = token.slice(0, i);
+  const sig = token.slice(i + 1);
+  if (!/^\d+$/.test(exp) || Number(exp) < Date.now()) return false;
+  return safeEqual(sig, await hmac(secret, exp));
+}
+function readCookie(req, name) {
+  const raw = req.headers.get("cookie") || "";
+  for (const part of raw.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === name) return v.join("=");
+  }
+  return null;
+}
+async function rateLimit(env, ip) {
+  const key = `rl:${ip}`;
+  const n = Number(await env.KV.get(key) || 0);
+  if (n >= 8) return false;
+  await env.KV.put(key, String(n + 1), { expirationTtl: 900 });
+  return true;
+}
+async function clearRateLimit(env, ip) {
+  await env.KV.delete(`rl:${ip}`);
+}
+
+// src/index.js
+var K_WARP = "warp:device";
+var K_CFG = "config:yaml";
+var K_STATE = "state:meta";
+var COOKIE = "om_session";
+var json = (o, s = 200) => new Response(JSON.stringify(o), {
+  status: s,
+  headers: { "content-type": "application/json; charset=utf-8" }
+});
+function subPath(env) {
+  const p = (env.SUB_PATH || "sub").replace(/^\/+|\/+$/g, "");
+  return "/" + p;
+}
+async function getWarp(env, force = false) {
+  if (!force) {
+    const cached = await env.KV.get(K_WARP, "json");
+    if (cached && cached.privateKey) return cached;
+  }
+  const w = await registerWarp("cf-worker");
+  await env.KV.put(K_WARP, JSON.stringify(w));
+  return w;
+}
+async function rebuild(env, { forceWarp = false } = {}) {
+  const warp = await getWarp(env, forceWarp);
+  const opera = await fetchOpera();
+  const { yaml, entries, landings, combos } = buildConfig(warp, opera);
+  const state = {
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    stats: { entries, landings, combos },
+    warp: {
+      deviceId: warp.deviceId,
+      ipv4: warp.ipv4,
+      ipv6: warp.ipv6,
+      registeredAt: warp.registeredAt
+    }
+  };
+  await env.KV.put(K_CFG, yaml);
+  await env.KV.put(K_STATE, JSON.stringify(state));
+  return state;
+}
+async function loggedIn(req, env) {
+  return verifyToken(env.PASSWORD, readCookie(req, COOKIE));
+}
+var index_default = {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(rebuild(env).catch((e) => console.error("\u5B9A\u65F6\u91CD\u5EFA\u5931\u8D25:", e.message)));
+  },
+  async fetch(req, env) {
+    const url = new URL(req.url);
+    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const ip = req.headers.get("cf-connecting-ip") || "unknown";
+    if (!env.PASSWORD) {
+      return new Response(
+        "\u672A\u8BBE\u7F6E PASSWORD\u3002\u8BF7\u6267\u884C: npx wrangler secret put PASSWORD",
+        { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } }
+      );
+    }
+    if (path === subPath(env)) {
+      const t = url.searchParams.get("token") || "";
+      const ok = await verifyToken(env.PASSWORD, t) || await loggedIn(req, env);
+      if (!ok) return new Response("Not Found", { status: 404 });
+      let yaml = await env.KV.get(K_CFG);
+      if (!yaml) {
+        await rebuild(env);
+        yaml = await env.KV.get(K_CFG);
+      }
+      return new Response(yaml, {
+        headers: {
+          "content-type": "text/yaml; charset=utf-8",
+          "content-disposition": 'attachment; filename="opera-masque.yaml"',
+          "profile-update-interval": "4",
+          "cache-control": "no-store"
+        }
+      });
+    }
+    if (path === "/login" && req.method === "POST") {
+      if (!await rateLimit(env, ip)) {
+        return json({ ok: false, error: "\u5C1D\u8BD5\u8FC7\u591A\uFF0C15 \u5206\u949F\u540E\u518D\u8BD5" }, 429);
+      }
+      const body = await req.json().catch(() => ({}));
+      if (!safeEqual(body.password || "", env.PASSWORD)) {
+        return json({ ok: false, error: "\u5BC6\u7801\u9519\u8BEF" }, 401);
+      }
+      await clearRateLimit(env, ip);
+      const token = await signToken(env.PASSWORD);
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "set-cookie": `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${7 * 24 * 3600}`
+        }
+      });
+    }
+    if (path === "/logout") {
+      return new Response(null, {
+        status: 302,
+        headers: {
+          location: "/",
+          "set-cookie": `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`
+        }
+      });
+    }
+    const authed = await loggedIn(req, env);
+    if (path === "/") {
+      if (!authed) {
+        return new Response(renderLogin(), {
+          headers: { "content-type": "text/html; charset=utf-8" }
+        });
+      }
+      const state = await env.KV.get(K_STATE, "json");
+      const token = await signToken(env.PASSWORD);
+      return new Response(renderUI(state, url.host, subPath(env), token), {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": "no-store"
+        }
+      });
+    }
+    if (!authed) return new Response("Not Found", { status: 404 });
+    if (path === "/api/state") {
+      return json(await env.KV.get(K_STATE, "json") || {});
+    }
+    if (path === "/api/refresh" && req.method === "POST") {
+      try {
+        const s = await rebuild(env);
+        return json({ ok: true, msg: `\u5DF2\u5237\u65B0\uFF0C${s.stats.combos} \u4E2A\u7EC4\u5408` });
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500);
+      }
+    }
+    if (path === "/api/reset-warp" && req.method === "POST") {
+      try {
+        const s = await rebuild(env, { forceWarp: true });
+        return json({ ok: true, msg: `WARP \u5DF2\u91CD\u6CE8\u518C\uFF0C${s.stats.combos} \u4E2A\u7EC4\u5408` });
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500);
+      }
+    }
+    return new Response("Not Found", { status: 404 });
+  }
+};
+export {
+  index_default as default
+};
