@@ -432,14 +432,17 @@ function masqueNode(name, ip, port, priv, pub, v4, v6, sni) {
 function buildEntries(warp) {
   const { privateKey: priv, peerPublicKey: pub, ipv4: v4, ipv6: v6 } = warp;
   const entries = [], proxies = [];
+  const v4Entries = [];
   for (const ip of [...V4, ...V6]) {
     for (const port of PORTS) {
       const n = entryName(ip, port);
       entries.push(n);
+      if (!ip.includes(":")) v4Entries.push(n);
       proxies.push(masqueNode(n, ip, port, priv, pub, v4, v6));
     }
   }
   entries.push("\u5B98\u65B9\u57DF\u540D");
+  v4Entries.push("\u5B98\u65B9\u57DF\u540D");
   proxies.push(masqueNode(
     "\u5B98\u65B9\u57DF\u540D",
     SNI_NODE[0],
@@ -450,7 +453,7 @@ function buildEntries(warp) {
     v6,
     OFFICIAL_SNI
   ));
-  return { entries, proxies };
+  return { entries, proxies, v4Entries };
 }
 var q = (a, n = 6) => a.map((x) => " ".repeat(n) + `- "${x}"`).join("\n");
 var p = (a, n = 6) => a.map((x) => " ".repeat(n) + `- ${x}`).join("\n");
@@ -613,7 +616,7 @@ ${p(picks)}
       - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9`;
 }
 function buildConfig(warp, opera, proton) {
-  const { entries, proxies } = buildEntries(warp);
+  const { entries, proxies, v4Entries } = buildEntries(warp);
   const byLoc = {};
   for (const land of opera.landings) {
     for (const ent of entries) {
@@ -626,10 +629,13 @@ function buildConfig(warp, opera, proton) {
   }
   const combos = Object.values(byLoc).reduce((a, b) => a + b.length, 0);
   let protonNames = [];
+  const protonByCC = {};
   if (proton && proton.servers && proton.servers.length) {
     proton.servers.forEach((srv, i) => {
-      const ent = entries[i % entries.length];
+      const ent = v4Entries[i % v4Entries.length];
       protonNames.push(srv.name);
+      const cc = srv.name.replace(/\d+$/, "");
+      (protonByCC[cc] = protonByCC[cc] || []).push(srv.name);
       proxies.push(`  - name: "${srv.name}"
     type: wireguard
     server: ${srv.ip}
@@ -639,14 +645,21 @@ function buildConfig(warp, opera, proton) {
     public-key: ${srv.pub}
     udp: true
     mtu: 1280
-    remote-dns-resolve: true
-    dns: [10.2.0.1]
     dialer-proxy: ${ent}`);
     });
   }
   const locNames = Object.keys(byLoc).map((l) => `${l}\u7EBF\u8DEF`);
+  const protonCCNames = Object.keys(protonByCC).map((c) => `Proton-${c}`);
+  const protonCCDefs = Object.entries(protonByCC).map(([cc, names]) => `  - name: Proton-${cc}
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 100
+    lazy: true
+    proxies:
+${q(names)}`).join("\n\n");
   const picks = [...locNames, "WARP\u76F4\u8FDE"];
-  if (protonNames.length) picks.push("Proton\u7EBF\u8DEF");
+  if (protonNames.length) picks.push("Proton\u7EBF\u8DEF", ...protonCCNames);
   const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}\u7EBF\u8DEF
     type: url-test
     url: http://www.gstatic.com/generate_204
@@ -715,6 +728,12 @@ ${locDefs}
 ${q(entries)}
 ${protonNames.length ? `
   - name: Proton\u7EBF\u8DEF
+    type: select
+    proxies:
+      - Proton-\u81EA\u52A8
+${p(protonCCNames)}
+
+  - name: Proton-\u81EA\u52A8
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
@@ -722,6 +741,8 @@ ${protonNames.length ? `
     lazy: true
     proxies:
 ${q(protonNames)}
+
+${protonCCDefs}
 ` : ""}
 ${tailGroups(picks)}
 

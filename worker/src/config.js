@@ -70,17 +70,22 @@ function masqueNode(name, ip, port, priv, pub, v4, v6, sni) {
 function buildEntries(warp) {
   const { privateKey: priv, peerPublicKey: pub, ipv4: v4, ipv6: v6 } = warp;
   const entries = [], proxies = [];
+  // v4Entries 单独留一份：做 dialer-proxy 目标时只能用 IPv4，
+  // 否则纯 IPv4 的机器上会直接 "network is unreachable"。
+  const v4Entries = [];
   for (const ip of [...V4, ...V6]) {
     for (const port of PORTS) {
       const n = entryName(ip, port);
       entries.push(n);
+      if (!ip.includes(":")) v4Entries.push(n);
       proxies.push(masqueNode(n, ip, port, priv, pub, v4, v6));
     }
   }
   entries.push("官方域名");
+  v4Entries.push("官方域名");   // 官方域名节点本身连的是 IPv4
   proxies.push(masqueNode("官方域名", SNI_NODE[0], SNI_NODE[1],
                           priv, pub, v4, v6, OFFICIAL_SNI));
-  return { entries, proxies };
+  return { entries, proxies, v4Entries };
 }
 
 const q = (a, n = 6) => a.map((x) => " ".repeat(n) + `- "${x}"`).join("\n");
@@ -252,7 +257,7 @@ ${p(picks)}
 }
 
 export function buildConfig(warp, opera, proton) {
-  const { entries, proxies } = buildEntries(warp);
+  const { entries, proxies, v4Entries } = buildEntries(warp);
 
   // 笛卡尔积：任一接入点或任一落地失效，其他组合仍可用
   const byLoc = {};
@@ -270,11 +275,18 @@ export function buildConfig(warp, opera, proton) {
 
   // Proton 落地。28 台 x 41 接入点会爆到上千节点，没必要，
   // 每台轮着分一个接入点即可，接入点挂了还有其他 Proton 节点顶。
+  //
+  // 只从 v4Entries 里选：WireGuard 的 UDP 要经这个接入点发出去，
+  // 分到 IPv6 接入点的话，没有 IPv6 的机器上会全部 network is unreachable。
   let protonNames = [];
+  const protonByCC = {};   // 国家 -> 该国节点名，用来按国家分组
   if (proton && proton.servers && proton.servers.length) {
     proton.servers.forEach((srv, i) => {
-      const ent = entries[i % entries.length];
+      const ent = v4Entries[i % v4Entries.length];
       protonNames.push(srv.name);
+      // 节点名形如「日本1」，去掉尾号就是国家名
+      const cc = srv.name.replace(/\d+$/, "");
+      (protonByCC[cc] = protonByCC[cc] || []).push(srv.name);
       proxies.push(`  - name: "${srv.name}"
     type: wireguard
     server: ${srv.ip}
@@ -284,8 +296,6 @@ export function buildConfig(warp, opera, proton) {
     public-key: ${srv.pub}
     udp: true
     mtu: 1280
-    remote-dns-resolve: true
-    dns: [10.2.0.1]
     dialer-proxy: ${ent}`);
     });
   }
@@ -294,8 +304,20 @@ export function buildConfig(warp, opera, proton) {
   const locNames = Object.keys(byLoc).map((l) => `${l}线路`);
   // 接入点本来就在 proxies 里（做 dialer-proxy 的目标），
   // 顺手暴露成一个直连组：套娃慢或落地挂了就切这个，一份订阅够用
+  // Proton 按国家分组：外层能选国家，组内 url-test 自动挑最快的那台
+  const protonCCNames = Object.keys(protonByCC).map((c) => `Proton-${c}`);
+  const protonCCDefs = Object.entries(protonByCC).map(([cc, names]) =>
+    `  - name: Proton-${cc}
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 100
+    lazy: true
+    proxies:
+${q(names)}`).join("\n\n");
+
   const picks = [...locNames, "WARP直连"];
-  if (protonNames.length) picks.push("Proton线路");
+  if (protonNames.length) picks.push("Proton线路", ...protonCCNames);
   const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}线路
     type: url-test
     url: http://www.gstatic.com/generate_204
@@ -366,6 +388,12 @@ ${locDefs}
 ${q(entries)}
 ${protonNames.length ? `
   - name: Proton线路
+    type: select
+    proxies:
+      - Proton-自动
+${p(protonCCNames)}
+
+  - name: Proton-自动
     type: url-test
     url: http://www.gstatic.com/generate_204
     interval: 300
@@ -373,6 +401,8 @@ ${protonNames.length ? `
     lazy: true
     proxies:
 ${q(protonNames)}
+
+${protonCCDefs}
 ` : ""}
 ${tailGroups(picks)}
 
