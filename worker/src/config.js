@@ -25,11 +25,12 @@ const RULESETS = [
   ["Ⓜ️ 微软服务", RS + "/ACL4SSR/ACL4SSR/master/Clash/Microsoft.list"],
   ["🍎 苹果服务", RS + "/ACL4SSR/ACL4SSR/master/Clash/Apple.list"],
   ["📲 电报信息", RS + "/ACL4SSR/ACL4SSR/master/Clash/Telegram.list"],
-  ["🤖 OpenAi", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list"],
-  ["🤖 OpenAi", RS + "/juewuy/ShellClash/master/rules/ai.list"],
-  ["🤖 OpenAi", RS + "/cmliu/ACL4SSR/main/Clash/Copilot.list"],
-  ["🤖 OpenAi", RS + "/cmliu/ACL4SSR/main/Clash/GithubCopilot.list"],
-  ["🤖 OpenAi", RS + "/cmliu/ACL4SSR/main/Clash/Claude.list"],
+  ["🤖 AI服务", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list"],
+  ["🤖 AI服务", RS + "/juewuy/ShellClash/master/rules/ai.list"],
+  ["🤖 AI服务", RS + "/cmliu/ACL4SSR/main/Clash/Copilot.list"],
+  ["🤖 AI服务", RS + "/cmliu/ACL4SSR/main/Clash/GithubCopilot.list"],
+  ["🤖 AI服务", RS + "/cmliu/ACL4SSR/main/Clash/Claude.list"],
+  ["🤖 AI服务", RS + "/cmliu/ACL4SSR/main/Clash/Gemini.list"],
   ["📹 油管视频", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/YouTube.list"],
   ["🎥 奈飞视频", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Netflix.list"],
   ["🌍 国外媒体", RS + "/ACL4SSR/ACL4SSR/master/Clash/ProxyMedia.list"],
@@ -88,6 +89,59 @@ function buildEntries(warp) {
   return { entries, proxies, v4Entries };
 }
 
+// 规则集只盖到 OpenAI / Claude / Gemini / Copilot，其他家没人维护。
+// 这批是自己补的，走 DOMAIN-SUFFIX 精确匹配。
+//
+// 注意别往里加 googleapis.com、cloudflare.com、stripe.com 这类共用域名 ——
+// 上游的 ai.list 就干了这事（它把整个 googleapis.com 和 bing.com 都算 AI），
+// 会把大量无关流量拽进 AI 分组。这里只放各家自己的域名。
+const AI_DOMAINS = [
+  // OpenAI（规则集已有 openai.com/chatgpt.com/sora.com，这几个是补的）
+  "openai.fm", "operator.chatgpt.com", "chat.com",
+  // Anthropic
+  "anthropic.com", "claude.ai", "claudeusercontent.com",
+  // Google
+  "gemini.google.com", "aistudio.google.com", "generativelanguage.googleapis.com",
+  "notebooklm.google.com", "notebooklm.google", "labs.google", "deepmind.com",
+  // xAI
+  "x.ai", "grok.com",
+  // Meta
+  "meta.ai",
+  // Perplexity
+  "perplexity.ai", "pplx.ai", "perplexity.com",
+  // Mistral
+  "mistral.ai", "chat.mistral.ai",
+  // Cohere / AI21 / Together / Fireworks / Groq
+  "cohere.com", "cohere.ai", "ai21.com", "together.ai", "together.xyz",
+  "fireworks.ai", "groq.com",
+  // 开源社区与推理平台
+  "huggingface.co", "hf.co", "huggingface.js.org",
+  "replicate.com", "replicate.delivery", "runpod.io", "modal.com",
+  "openrouter.ai", "poe.com", "quora.com",
+  // 编程助手
+  "cursor.com", "cursor.sh", "codeium.com", "windsurf.com",
+  "tabnine.com", "sourcegraph.com", "phind.com", "v0.dev", "v0.app",
+  "bolt.new", "lovable.dev", "devin.ai", "cognition.ai",
+  // 图像与视频
+  "midjourney.com", "stability.ai", "stablediffusionweb.com",
+  "leonardo.ai", "runwayml.com", "pika.art", "lumalabs.ai",
+  "ideogram.ai", "recraft.ai", "krea.ai", "civitai.com",
+  // 语音
+  "elevenlabs.io", "eleven-labs.com", "play.ht", "suno.com", "suno.ai",
+  "udio.com", "assemblyai.com", "deepgram.com",
+  // 搜索与写作
+  "you.com", "kagi.com", "exa.ai", "tavily.com",
+  "jasper.ai", "copy.ai", "writesonic.com", "notion.so",
+  // 观测与工具链
+  "langchain.com", "langsmith.com", "wandb.ai", "weightsandbiases.com",
+  "pinecone.io", "weaviate.io", "qdrant.tech", "chromadb.com",
+  // 国产（默认也走代理，很多在国内反而连不上或要境外号）
+  "deepseek.com", "moonshot.cn", "moonshotai.com", "kimi.com",
+  "bigmodel.cn", "zhipuai.cn", "z.ai",
+  "minimaxi.com", "minimax.io", "hailuoai.com",
+  "siliconflow.cn", "dashscope.aliyuncs.com",
+];
+
 const q = (a, n = 6) => a.map((x) => " ".repeat(n) + `- "${x}"`).join("\n");
 const p = (a, n = 6) => a.map((x) => " ".repeat(n) + `- ${x}`).join("\n");
 
@@ -105,7 +159,9 @@ function buildRules() {
     path: ./ruleset/${pn}.list`);
     rules.push(`  - RULE-SET,${pn},${group}`);
   });
-  return { prov: prov.join("\n"), rules: rules.join("\n") };
+  // 内联的 AI 域名放在 RULE-SET 前面，别被上游规则集里更宽的条目抢先命中
+  const ai = AI_DOMAINS.map((d) => `  - DOMAIN-SUFFIX,${d},🤖 AI服务`);
+  return { prov: prov.join("\n"), rules: [...ai, ...rules].join("\n") };
 }
 
 /** 公共头部：端口、DNS、sniffer 那一堆。 */
@@ -200,7 +256,7 @@ ${p(picks)}
       - ♻️ 自动选择
       - 🎯 全球直连
 
-  - name: 🤖 OpenAi
+  - name: 🤖 AI服务
     type: select
     proxies:
       - 🚀 节点选择

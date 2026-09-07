@@ -46,11 +46,12 @@ RULESETS = [
     ("Ⓜ️ 微软服务", f"{RS}/ACL4SSR/ACL4SSR/master/Clash/Microsoft.list"),
     ("🍎 苹果服务", f"{RS}/ACL4SSR/ACL4SSR/master/Clash/Apple.list"),
     ("📲 电报信息", f"{RS}/ACL4SSR/ACL4SSR/master/Clash/Telegram.list"),
-    ("🤖 OpenAi", f"{RS}/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list"),
-    ("🤖 OpenAi", f"{RS}/juewuy/ShellClash/master/rules/ai.list"),
-    ("🤖 OpenAi", f"{RS}/cmliu/ACL4SSR/main/Clash/Copilot.list"),
-    ("🤖 OpenAi", f"{RS}/cmliu/ACL4SSR/main/Clash/GithubCopilot.list"),
-    ("🤖 OpenAi", f"{RS}/cmliu/ACL4SSR/main/Clash/Claude.list"),
+    ("🤖 AI服务", f"{RS}/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list"),
+    ("🤖 AI服务", f"{RS}/juewuy/ShellClash/master/rules/ai.list"),
+    ("🤖 AI服务", f"{RS}/cmliu/ACL4SSR/main/Clash/Copilot.list"),
+    ("🤖 AI服务", f"{RS}/cmliu/ACL4SSR/main/Clash/GithubCopilot.list"),
+    ("🤖 AI服务", f"{RS}/cmliu/ACL4SSR/main/Clash/Claude.list"),
+    ("🤖 AI服务", f"{RS}/cmliu/ACL4SSR/main/Clash/Gemini.list"),
     ("📹 油管视频", f"{RS}/ACL4SSR/ACL4SSR/master/Clash/Ruleset/YouTube.list"),
     ("🎥 奈飞视频", f"{RS}/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Netflix.list"),
     ("🌍 国外媒体", f"{RS}/ACL4SSR/ACL4SSR/master/Clash/ProxyMedia.list"),
@@ -59,6 +60,37 @@ RULESETS = [
     ("🚀 节点选择", f"{RS}/cmliu/ACL4SSR/main/Clash/CMBlog.list"),
     ("🎯 全球直连", f"{RS}/ACL4SSR/ACL4SSR/master/Clash/ChinaDomain.list"),
     ("🎯 全球直连", f"{RS}/ACL4SSR/ACL4SSR/master/Clash/ChinaCompanyIp.list"),
+]
+
+# 规则集只盖到 OpenAI / Claude / Gemini / Copilot，其他家没人维护。
+# 这批是自己补的。别往里加 googleapis.com、cloudflare.com 这类共用域名，
+# 会把大量无关流量拽进 AI 分组。和 worker/src/config.js 里那份保持一致。
+AI_DOMAINS = [
+    "openai.fm", "operator.chatgpt.com", "chat.com", "anthropic.com",
+    "claude.ai", "claudeusercontent.com", "gemini.google.com", "aistudio.google.com",
+    "generativelanguage.googleapis.com", "notebooklm.google.com", "notebooklm.google", "labs.google",
+    "deepmind.com", "x.ai", "grok.com", "meta.ai",
+    "perplexity.ai", "pplx.ai", "perplexity.com", "mistral.ai",
+    "chat.mistral.ai", "cohere.com", "cohere.ai", "ai21.com",
+    "together.ai", "together.xyz", "fireworks.ai", "groq.com",
+    "huggingface.co", "hf.co", "huggingface.js.org", "replicate.com",
+    "replicate.delivery", "runpod.io", "modal.com", "openrouter.ai",
+    "poe.com", "quora.com", "cursor.com", "cursor.sh",
+    "codeium.com", "windsurf.com", "tabnine.com", "sourcegraph.com",
+    "phind.com", "v0.dev", "v0.app", "bolt.new",
+    "lovable.dev", "devin.ai", "cognition.ai", "midjourney.com",
+    "stability.ai", "stablediffusionweb.com", "leonardo.ai", "runwayml.com",
+    "pika.art", "lumalabs.ai", "ideogram.ai", "recraft.ai",
+    "krea.ai", "civitai.com", "elevenlabs.io", "eleven-labs.com",
+    "play.ht", "suno.com", "suno.ai", "udio.com",
+    "assemblyai.com", "deepgram.com", "you.com", "kagi.com",
+    "exa.ai", "tavily.com", "jasper.ai", "copy.ai",
+    "writesonic.com", "notion.so", "langchain.com", "langsmith.com",
+    "wandb.ai", "weightsandbiases.com", "pinecone.io", "weaviate.io",
+    "qdrant.tech", "chromadb.com", "deepseek.com", "moonshot.cn",
+    "moonshotai.com", "kimi.com", "bigmodel.cn", "zhipuai.cn",
+    "z.ai", "minimaxi.com", "minimax.io", "hailuoai.com",
+    "siliconflow.cn", "dashscope.aliyuncs.com",
 ]
 
 
@@ -179,6 +211,9 @@ def build(cfg, landings):
     url: {url}
     path: ./ruleset/{pn}.list""")
         rules.append(f"  - RULE-SET,{pn},{group}")
+
+    # 内联的 AI 域名放在 RULE-SET 前面，别被上游更宽的条目抢先命中
+    rules = [f"  - DOMAIN-SUFFIX,{d},🤖 AI服务" for d in AI_DOMAINS] + rules
 
     yaml = f"""# Opera VPN over Cloudflare WARP (MASQUE)
 # 由 GitHub Actions 自动生成，请勿手工编辑
@@ -308,7 +343,7 @@ proxy-groups:
       - ♻️ 自动选择
       - 🎯 全球直连
 
-  - name: 🤖 OpenAi
+  - name: 🤖 AI服务
     type: select
     proxies:
       - 🚀 节点选择

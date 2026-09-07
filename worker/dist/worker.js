@@ -391,11 +391,12 @@ var RULESETS = [
   ["\u24C2\uFE0F \u5FAE\u8F6F\u670D\u52A1", RS + "/ACL4SSR/ACL4SSR/master/Clash/Microsoft.list"],
   ["\u{1F34E} \u82F9\u679C\u670D\u52A1", RS + "/ACL4SSR/ACL4SSR/master/Clash/Apple.list"],
   ["\u{1F4F2} \u7535\u62A5\u4FE1\u606F", RS + "/ACL4SSR/ACL4SSR/master/Clash/Telegram.list"],
-  ["\u{1F916} OpenAi", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list"],
-  ["\u{1F916} OpenAi", RS + "/juewuy/ShellClash/master/rules/ai.list"],
-  ["\u{1F916} OpenAi", RS + "/cmliu/ACL4SSR/main/Clash/Copilot.list"],
-  ["\u{1F916} OpenAi", RS + "/cmliu/ACL4SSR/main/Clash/GithubCopilot.list"],
-  ["\u{1F916} OpenAi", RS + "/cmliu/ACL4SSR/main/Clash/Claude.list"],
+  ["\u{1F916} AI\u670D\u52A1", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list"],
+  ["\u{1F916} AI\u670D\u52A1", RS + "/juewuy/ShellClash/master/rules/ai.list"],
+  ["\u{1F916} AI\u670D\u52A1", RS + "/cmliu/ACL4SSR/main/Clash/Copilot.list"],
+  ["\u{1F916} AI\u670D\u52A1", RS + "/cmliu/ACL4SSR/main/Clash/GithubCopilot.list"],
+  ["\u{1F916} AI\u670D\u52A1", RS + "/cmliu/ACL4SSR/main/Clash/Claude.list"],
+  ["\u{1F916} AI\u670D\u52A1", RS + "/cmliu/ACL4SSR/main/Clash/Gemini.list"],
   ["\u{1F4F9} \u6CB9\u7BA1\u89C6\u9891", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/YouTube.list"],
   ["\u{1F3A5} \u5948\u98DE\u89C6\u9891", RS + "/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Netflix.list"],
   ["\u{1F30D} \u56FD\u5916\u5A92\u4F53", RS + "/ACL4SSR/ACL4SSR/master/Clash/ProxyMedia.list"],
@@ -455,6 +456,121 @@ function buildEntries(warp) {
   ));
   return { entries, proxies, v4Entries };
 }
+var AI_DOMAINS = [
+  // OpenAI（规则集已有 openai.com/chatgpt.com/sora.com，这几个是补的）
+  "openai.fm",
+  "operator.chatgpt.com",
+  "chat.com",
+  // Anthropic
+  "anthropic.com",
+  "claude.ai",
+  "claudeusercontent.com",
+  // Google
+  "gemini.google.com",
+  "aistudio.google.com",
+  "generativelanguage.googleapis.com",
+  "notebooklm.google.com",
+  "notebooklm.google",
+  "labs.google",
+  "deepmind.com",
+  // xAI
+  "x.ai",
+  "grok.com",
+  // Meta
+  "meta.ai",
+  // Perplexity
+  "perplexity.ai",
+  "pplx.ai",
+  "perplexity.com",
+  // Mistral
+  "mistral.ai",
+  "chat.mistral.ai",
+  // Cohere / AI21 / Together / Fireworks / Groq
+  "cohere.com",
+  "cohere.ai",
+  "ai21.com",
+  "together.ai",
+  "together.xyz",
+  "fireworks.ai",
+  "groq.com",
+  // 开源社区与推理平台
+  "huggingface.co",
+  "hf.co",
+  "huggingface.js.org",
+  "replicate.com",
+  "replicate.delivery",
+  "runpod.io",
+  "modal.com",
+  "openrouter.ai",
+  "poe.com",
+  "quora.com",
+  // 编程助手
+  "cursor.com",
+  "cursor.sh",
+  "codeium.com",
+  "windsurf.com",
+  "tabnine.com",
+  "sourcegraph.com",
+  "phind.com",
+  "v0.dev",
+  "v0.app",
+  "bolt.new",
+  "lovable.dev",
+  "devin.ai",
+  "cognition.ai",
+  // 图像与视频
+  "midjourney.com",
+  "stability.ai",
+  "stablediffusionweb.com",
+  "leonardo.ai",
+  "runwayml.com",
+  "pika.art",
+  "lumalabs.ai",
+  "ideogram.ai",
+  "recraft.ai",
+  "krea.ai",
+  "civitai.com",
+  // 语音
+  "elevenlabs.io",
+  "eleven-labs.com",
+  "play.ht",
+  "suno.com",
+  "suno.ai",
+  "udio.com",
+  "assemblyai.com",
+  "deepgram.com",
+  // 搜索与写作
+  "you.com",
+  "kagi.com",
+  "exa.ai",
+  "tavily.com",
+  "jasper.ai",
+  "copy.ai",
+  "writesonic.com",
+  "notion.so",
+  // 观测与工具链
+  "langchain.com",
+  "langsmith.com",
+  "wandb.ai",
+  "weightsandbiases.com",
+  "pinecone.io",
+  "weaviate.io",
+  "qdrant.tech",
+  "chromadb.com",
+  // 国产（默认也走代理，很多在国内反而连不上或要境外号）
+  "deepseek.com",
+  "moonshot.cn",
+  "moonshotai.com",
+  "kimi.com",
+  "bigmodel.cn",
+  "zhipuai.cn",
+  "z.ai",
+  "minimaxi.com",
+  "minimax.io",
+  "hailuoai.com",
+  "siliconflow.cn",
+  "dashscope.aliyuncs.com"
+];
 var q = (a, n = 6) => a.map((x) => " ".repeat(n) + `- "${x}"`).join("\n");
 var p = (a, n = 6) => a.map((x) => " ".repeat(n) + `- ${x}`).join("\n");
 function buildRules() {
@@ -470,7 +586,8 @@ function buildRules() {
     path: ./ruleset/${pn}.list`);
     rules.push(`  - RULE-SET,${pn},${group}`);
   });
-  return { prov: prov.join("\n"), rules: rules.join("\n") };
+  const ai = AI_DOMAINS.map((d) => `  - DOMAIN-SUFFIX,${d},\u{1F916} AI\u670D\u52A1`);
+  return { prov: prov.join("\n"), rules: [...ai, ...rules].join("\n") };
 }
 function head(ipv6) {
   return `mixed-port: 7890
@@ -560,7 +677,7 @@ ${p(picks)}
       - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9
       - \u{1F3AF} \u5168\u7403\u76F4\u8FDE
 
-  - name: \u{1F916} OpenAi
+  - name: \u{1F916} AI\u670D\u52A1
     type: select
     proxies:
       - \u{1F680} \u8282\u70B9\u9009\u62E9

@@ -128,5 +128,43 @@ t(`无悬空引用${dangling.length ? " (" + dangling.slice(0, 3) + ")" : ""}`, 
   t(`无悬空引用${dang3.length ? " (" + dang3.slice(0, 3) + ")" : ""}`, dang3.length === 0);
 }
 
+// AI 分组
+{
+  const y = buildConfig(warp, opera).yaml;
+  const gs = [...y.matchAll(/^  - name: (.+)$/gm)].map((m) => m[1]);
+
+  t("有 AI服务 分组", gs.includes("🤖 AI服务"));
+  t("旧的 OpenAi 分组已改名", !gs.includes("🤖 OpenAi"));
+  t("没有指向 OpenAi 的残留规则", !y.includes(",🤖 OpenAi"));
+
+  // 各家都要能命中
+  const must = [
+    "anthropic.com", "grok.com", "perplexity.ai", "deepseek.com",
+    "midjourney.com", "huggingface.co", "cursor.com", "elevenlabs.io",
+    "mistral.ai", "meta.ai", "openrouter.ai", "kimi.com",
+  ];
+  const miss = must.filter((d) => !y.includes(`DOMAIN-SUFFIX,${d},🤖 AI服务`));
+  t(`覆盖各家 AI${miss.length ? " 缺:" + miss.slice(0, 3) : ""}`, miss.length === 0);
+
+  // 共用域名不能进来，否则会把无关流量拽进 AI 分组
+  const tooWide = ["googleapis.com", "cloudflare.com", "stripe.com", "sentry.io", "bing.com"];
+  const bad = tooWide.filter((d) => y.includes(`DOMAIN-SUFFIX,${d},🤖 AI服务`));
+  t(`没有过宽的共用域名${bad.length ? " (" + bad + ")" : ""}`, bad.length === 0);
+
+  // 内联规则必须排在 RULE-SET 之前，否则会被上游更宽的条目抢先命中
+  const rs = y.indexOf("  - RULE-SET,");
+  const inl = y.indexOf("  - DOMAIN-SUFFIX,");
+  t("内联 AI 规则排在 RULE-SET 前", inl > 0 && inl < rs);
+
+  // 域名不能重复
+  const ds = [...y.matchAll(/^  - DOMAIN-SUFFIX,([^,]+),🤖 AI服务$/gm)].map((m) => m[1]);
+  t(`AI 域名 ${ds.length} 条无重复`, new Set(ds).size === ds.length);
+
+  // AI 分组要能选到所有落地
+  const ai = y.split("  - name: 🤖 AI服务")[1].split("\n  - name:")[0];
+  t("AI服务 能选地区线路", ai.includes("亚洲线路"));
+  t("AI服务 能选 WARP直连", ai.includes("WARP直连"));
+}
+
 console.log(`\n通过 ${pass} 失败 ${fail}`);
 if (fail) process.exit(1);
