@@ -84,5 +84,49 @@ t(`无悬空引用${dangling.length ? " (" + dangling.slice(0, 3) + ")" : ""}`, 
     jp.includes("日本1") && jp.includes("日本2") && !jp.includes("美国1"));
 }
 
+// Windscribe（和 Opera 同构，但只轮接入点不做笛卡尔积）
+{
+  const wind = {
+    username: "WU", password: "WP",
+    servers: [
+      { tag: "香港1", loc: "香港", host: "hk-016.totallyacdn.com", port: 443 },
+      { tag: "香港2", loc: "香港", host: "hk-014.totallyacdn.com", port: 443 },
+      { tag: "英国1", loc: "英国", host: "uk-048.totallyacdn.com", port: 443 },
+    ],
+  };
+  const r3 = buildConfig(warp, opera, null, wind);
+  const y = r3.yaml;
+  const gs3 = [...y.matchAll(/^  - name: (.+)$/gm)].map((m) => m[1]);
+
+  t(`Windscribe 节点 ${r3.wind} 个`, r3.wind === 3);
+  t("Windscribe线路 是 select 组", /- name: Windscribe线路\n    type: select/.test(y));
+  t("按地区分组", gs3.includes("WS-香港") && gs3.includes("WS-英国"));
+  t("有自动选择组", gs3.includes("WS-自动"));
+
+  const hk = y.split("  - name: WS-香港")[1].split("\n  - name:")[0];
+  t("地区组只含该地区节点",
+    hk.includes("WS-香港1") && hk.includes("WS-香港2") && !hk.includes("WS-英国1"));
+
+  // 同 Proton：dialer-proxy 只能是 IPv4 接入点
+  const wdp = [...y.matchAll(/name: "WS-[^"]+"[^\n]*dialer-proxy: (\S+)\}/g)].map((m) => m[1]);
+  t(`Windscribe 接入点全是 IPv4 (${wdp.length} 个)`,
+    wdp.length === 3 && wdp.every((d) => !d.startsWith("v6-")));
+
+  const sel3 = y.split("  - name: 🚀 节点选择")[1].split("\n  - name:")[0];
+  t("节点选择含 Windscribe线路", sel3.includes("Windscribe线路"));
+
+  // 没传 wind 时不该冒出任何 WS 相关的东西
+  t("不传 wind 就没有 WS 分组", !buildConfig(warp, opera).yaml.includes("Windscribe线路"));
+
+  // 悬空引用（含 Windscribe 分组）
+  const gsec = y.slice(y.indexOf("proxy-groups:"), y.indexOf("rule-providers:"));
+  const refs3 = [...gsec.matchAll(/^      - "?([^"\n]+)"?$/gm)].map((m) => m[1].trim());
+  const names3 = [...y.matchAll(/^  - \{name: "([^"]+)"/gm)].map((m) => m[1]);
+  const ents3 = [...y.matchAll(/^  - name: (\S+)\n    type: masque$/gm)].map((m) => m[1]);
+  const def3 = new Set([...gs3, ...names3, ...ents3, "DIRECT", "REJECT"]);
+  const dang3 = [...new Set(refs3.filter((r) => !def3.has(r)))];
+  t(`无悬空引用${dang3.length ? " (" + dang3.slice(0, 3) + ")" : ""}`, dang3.length === 0);
+}
+
 console.log(`\n通过 ${pass} 失败 ${fail}`);
 if (fail) process.exit(1);

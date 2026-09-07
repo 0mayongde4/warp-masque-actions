@@ -615,7 +615,7 @@ ${p(picks)}
       - \u{1F3AF} \u5168\u7403\u76F4\u8FDE
       - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9`;
 }
-function buildConfig(warp, opera, proton) {
+function buildConfig(warp, opera, proton, wind) {
   const { entries, proxies, v4Entries } = buildEntries(warp);
   const byLoc = {};
   for (const land of opera.landings) {
@@ -648,6 +648,28 @@ function buildConfig(warp, opera, proton) {
     dialer-proxy: ${ent}`);
     });
   }
+  const windNames = [];
+  const windByLoc = {};
+  if (wind && wind.servers && wind.servers.length) {
+    wind.servers.forEach((srv, i) => {
+      const ent = v4Entries[i % v4Entries.length];
+      const name = `WS-${srv.tag}`;
+      windNames.push(name);
+      (windByLoc[srv.loc] = windByLoc[srv.loc] || []).push(name);
+      proxies.push(
+        `  - {name: "${name}", type: http, server: ${srv.host}, port: ${srv.port}, username: ${wind.username}, password: ${wind.password}, tls: true, sni: ${srv.host}, skip-cert-verify: false, dialer-proxy: ${ent}}`
+      );
+    });
+  }
+  const windLocNames = Object.keys(windByLoc).map((l) => `WS-${l}`);
+  const windLocDefs = Object.entries(windByLoc).map(([loc, names]) => `  - name: WS-${loc}
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 100
+    lazy: true
+    proxies:
+${q(names)}`).join("\n\n");
   const locNames = Object.keys(byLoc).map((l) => `${l}\u7EBF\u8DEF`);
   const protonCCNames = Object.keys(protonByCC).map((c) => `Proton-${c}`);
   const protonCCDefs = Object.entries(protonByCC).map(([cc, names]) => `  - name: Proton-${cc}
@@ -660,6 +682,7 @@ function buildConfig(warp, opera, proton) {
 ${q(names)}`).join("\n\n");
   const picks = [...locNames, "WARP\u76F4\u8FDE"];
   if (protonNames.length) picks.push("Proton\u7EBF\u8DEF", ...protonCCNames);
+  if (windNames.length) picks.push("Windscribe\u7EBF\u8DEF", ...windLocNames);
   const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}\u7EBF\u8DEF
     type: url-test
     url: http://www.gstatic.com/generate_204
@@ -680,7 +703,7 @@ ${q(tags)}`).join("\n\n");
 # \u8282\u70B9\u540D "\u6B27\u6D321@198.1-443" = \u6B27\u6D32\u7B2C 1 \u4E2A\u843D\u5730\uFF0C\u7ECF 162.159.198.1:443 \u63A5\u5165\u3002
 #
 # \u63A5\u5165\u70B9 ${entries.length} \u4E2A x \u843D\u5730 ${opera.landings.length} \u4E2A = \u7EC4\u5408 ${combos} \u4E2A\uFF0C
-# \u5916\u52A0 ${entries.length} \u4E2A\u76F4\u8FDE\u63A5\u5165\u70B9${protonNames.length ? ` \u548C ${protonNames.length} \u4E2A Proton \u843D\u5730` : ""}\u3002
+# \u5916\u52A0 ${entries.length} \u4E2A\u76F4\u8FDE\u63A5\u5165\u70B9${protonNames.length ? ` \u548C ${protonNames.length} \u4E2A Proton \u843D\u5730` : ""}${windNames.length ? ` \u548C ${windNames.length} \u4E2A Windscribe \u843D\u5730` : ""}\u3002
 # \u4EFB\u4E00\u73AF\u5931\u6548\u90FD\u6709\u66FF\u4EE3\u8DEF\u5F84\u3002
 #
 # \u9700\u8981 mihomo Alpha \u5206\u652F\uFF1A\u7A33\u5B9A\u7248\u6CA1\u6709 masque outbound\uFF0C\u4E5F\u4E0D\u8BA4 dialer-proxy\u3002
@@ -743,6 +766,23 @@ ${p(protonCCNames)}
 ${q(protonNames)}
 
 ${protonCCDefs}
+` : ""}${windNames.length ? `
+  - name: Windscribe\u7EBF\u8DEF
+    type: select
+    proxies:
+      - WS-\u81EA\u52A8
+${p(windLocNames)}
+
+  - name: WS-\u81EA\u52A8
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 80
+    lazy: true
+    proxies:
+${q(windNames)}
+
+${windLocDefs}
 ` : ""}
 ${tailGroups(picks)}
 
@@ -760,7 +800,8 @@ ${rules}
     entries: entries.length,
     landings: opera.landings.length,
     combos,
-    proton: protonNames.length
+    proton: protonNames.length,
+    wind: windNames.length
   };
 }
 
@@ -782,6 +823,143 @@ function parseBlob(text) {
     throw new Error("\u8FD9\u4EFD\u51ED\u636E\u5DF2\u7ECF\u8FC7\u671F\u4E86\uFF0C\u91CD\u8DD1\u6D41\u6C34\u7EBF\u62FF\u65B0\u7684");
   }
   return obj;
+}
+
+// src/windscribe.js
+var CLIENT_AUTH_SECRET = "952b4412f002315aa50751032fcaab03";
+var API2 = "https://api.windscribe.com";
+var ASSETS = "https://assets.windscribe.com/serverlist";
+var PROXY_PORT = 443;
+var H3 = {
+  "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.5060.53 Safari/537.36",
+  "Origin": "chrome-extension://hnmpcagpplmpfojmgmnngilcnanddlhb",
+  "Accept": "application/json"
+};
+var CC = {
+  "US-C": "\u7F8E\u56FD\u4E2D\u90E8",
+  "US": "\u7F8E\u56FD\u4E1C\u90E8",
+  "US-W": "\u7F8E\u56FD\u897F\u90E8",
+  "CA": "\u52A0\u62FF\u5927\u4E1C\u90E8",
+  "CA-W": "\u52A0\u62FF\u5927\u897F\u90E8",
+  "FR": "\u6CD5\u56FD",
+  "DE": "\u5FB7\u56FD",
+  "NL": "\u8377\u5170",
+  "NO": "\u632A\u5A01",
+  "RO": "\u7F57\u9A6C\u5C3C\u4E9A",
+  "CH": "\u745E\u58EB",
+  "GB": "\u82F1\u56FD",
+  "HK": "\u9999\u6E2F"
+};
+function authHash() {
+  const t = Math.floor(Date.now() / 1e3);
+  return { hash: md5Hex(CLIENT_AUTH_SECRET + String(t)), time: t };
+}
+function randName(n) {
+  const a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  const cs = "abcdefghijklmnopqrstuvwxyz0123456789";
+  return [...a].map((b) => cs[b % cs.length]).join("");
+}
+function randPass() {
+  const a = new Uint8Array(16);
+  crypto.getRandomValues(a);
+  const cs = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  return [...a].map((b) => cs[b % cs.length]).join("") + "!aA9";
+}
+async function call(url, init) {
+  const r = await fetch(url, { ...init, headers: { ...H3, ...init?.headers || {} } });
+  const text = await r.text();
+  let j;
+  try {
+    j = JSON.parse(text);
+  } catch {
+    throw new Error(`\u54CD\u5E94\u4E0D\u662F JSON: ${text.slice(0, 120)}`);
+  }
+  if (!j.data) {
+    const msg = (j.errorMessage || j.message || text).toString().slice(0, 160);
+    throw new Error(`Windscribe ${r.status}: ${msg}`);
+  }
+  return j.data;
+}
+async function registerWindscribe() {
+  const { hash, time } = authHash();
+  const username = "u" + randName(9);
+  const password = randPass();
+  const d = await call(`${API2}/Users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_auth_hash: hash,
+      time: String(time),
+      session_type_id: "2",
+      username,
+      password
+    }).toString()
+  });
+  if (d.status !== 1) {
+    throw new Error(`\u8D26\u53F7\u72B6\u6001\u5F02\u5E38 status=${d.status}\uFF0C\u591A\u534A\u662F\u8FD9\u4E2A\u51FA\u53E3 IP \u5F00\u6237\u592A\u9891\u7E41`);
+  }
+  return {
+    username,
+    password,
+    userId: d.user_id,
+    sessionAuthHash: d.session_auth_hash,
+    locHash: d.loc_hash,
+    trafficMax: d.traffic_max,
+    registeredAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+async function fetchCredentials(acc) {
+  const { hash, time } = authHash();
+  const q2 = new URLSearchParams({
+    client_auth_hash: hash,
+    session_auth_hash: acc.sessionAuthHash,
+    time: String(time)
+  });
+  const d = await call(`${API2}/ServerCredentials?${q2}`);
+  return { username: atob(d.username), password: atob(d.password) };
+}
+async function fetchSession(acc) {
+  const { hash, time } = authHash();
+  const q2 = new URLSearchParams({
+    client_auth_hash: hash,
+    session_auth_hash: acc.sessionAuthHash,
+    time: String(time),
+    session_type_id: "2"
+  });
+  const d = await call(`${API2}/Session?${q2}`);
+  return {
+    used: d.traffic_used,
+    max: d.traffic_max,
+    status: d.status,
+    locHash: d.loc_hash
+  };
+}
+async function fetchServers(acc) {
+  const r = await fetch(`${ASSETS}/chrome/0/${acc.locHash}`, { headers: H3 });
+  if (!r.ok) throw new Error(`serverlist HTTP ${r.status}`);
+  const j = await r.json();
+  const out = [];
+  for (const c of j.data || []) {
+    if (c.premium_only) continue;
+    const loc = CC[c.short_name];
+    if (!loc) continue;
+    let seq = 0;
+    for (const g of c.groups || []) {
+      for (const h of g.hosts || []) {
+        if (!h.hostname) continue;
+        seq += 1;
+        out.push({ tag: `${loc}${seq}`, loc, host: h.hostname, port: PROXY_PORT });
+      }
+    }
+  }
+  return out;
+}
+async function fetchWindscribe(account) {
+  const acc = account && account.sessionAuthHash ? account : await registerWindscribe();
+  const cred = await fetchCredentials(acc);
+  const servers = await fetchServers(acc);
+  return { account: acc, ...cred, servers };
 }
 
 // src/ui.js
@@ -976,7 +1154,7 @@ async function go(e){
 <\/script>
 </body></html>`;
 }
-function renderUI(state, host, sp, token, cred, pushToken, protonCred) {
+function renderUI(state, host, sp, token, cred, pushToken, protonCred, windUsage) {
   const s = state || {};
   const warp = s.warp || {};
   const stat = s.stats || {};
@@ -989,6 +1167,10 @@ function renderUI(state, host, sp, token, cred, pushToken, protonCred) {
   const sub = `https://${host}${sp}?token=${token}`;
   const pushUrl = pushToken ? `https://${host}/push/${pushToken}` : "";
   const pExp = protonCred && protonCred.expiresAt ? new Date(protonCred.expiresAt * 1e3) : null;
+  const windInfo = s.wind || null;
+  const windPct = windUsage && windUsage.max ? Math.round(windUsage.used / windUsage.max * 100) : 0;
+  const gb = (n) => (n / 1073741824).toFixed(2) + " GB";
+  const windUsageTxt = windUsage && windUsage.max ? `${gb(windUsage.used)} / ${gb(windUsage.max)}\uFF08${windPct}%\uFF09` : null;
   const pLeft = pExp ? Math.floor((pExp.getTime() - Date.now()) / 864e5) : null;
   const row = (k, v, cls = "") => `<div class="row"><span class="k">${k}</span><span class="v ${cls}">${v}</span></div>`;
   return `<!DOCTYPE html>
@@ -1083,6 +1265,7 @@ function renderUI(state, host, sp, token, cred, pushToken, protonCred) {
         <b>\u4E9A\u6D32/\u6B27\u6D32/\u7F8E\u6D32\u7EBF\u8DEF</b> \u2014 \u8D70 MASQUE \u518D\u843D Opera\uFF0C\u80FD\u6362\u51FA\u53E3\u56FD\u5BB6\uFF0C\u4F46\u591A\u4E00\u8DF3\u4F1A\u6162\u4E9B\u3002<br>
         <b>WARP\u76F4\u8FDE</b> \u2014 \u53EA\u8D70 MASQUE\uFF0C\u51FA\u53E3\u662F Cloudflare \u81EA\u5DF1\u7684 IP\uFF0C\u5FEB\u4F46\u9009\u4E0D\u4E86\u56FD\u5BB6\u3002<br>
         <b>Proton\u7EBF\u8DEF</b> \u2014 MASQUE \u6253\u5E95 + Proton WireGuard \u843D\u5730\uFF0C10 \u4E2A\u56FD\u5BB6\uFF08\u914D\u7F6E\u540E\u51FA\u73B0\uFF09\u3002<br>
+        <b>Windscribe\u7EBF\u8DEF</b> \u2014 MASQUE \u6253\u5E95 + Windscribe \u843D\u5730\uFF0C13 \u4E2A\u5730\u533A\uFF0C\u6709\u9999\u6E2F\u3002<br>
         \u5957\u5A03\u7EBF\u8DEF\u8D85\u65F6\u6216\u843D\u5730\u6302\u4E86\uFF0C\u5207 WARP\u76F4\u8FDE\u9876\u4E0A\u3002
       </div>
       <div id="msg"></div>
@@ -1096,6 +1279,7 @@ function renderUI(state, host, sp, token, cred, pushToken, protonCred) {
         <div class="cell"><div class="n">${stat.landings ?? "\u2014"}</div><div class="l">Opera \u843D\u5730</div></div>
         <div class="cell"><div class="n">${stat.entries ?? "\u2014"}</div><div class="l">WARP \u76F4\u8FDE</div></div>
         <div class="cell"><div class="n">${stat.proton || "\u2014"}</div><div class="l">Proton \u843D\u5730</div></div>
+        <div class="cell"><div class="n">${stat.wind || "\u2014"}</div><div class="l">Windscribe \u843D\u5730</div></div>
       </div>
       <div class="note">
         \u6BCF\u4E2A\u843D\u5730\u548C\u6BCF\u4E2A\u63A5\u5165\u70B9\u90FD\u7EC4\u5408\u4E00\u904D\uFF0C\u4EFB\u4E00\u73AF\u5931\u6548\u90FD\u8FD8\u6709\u522B\u7684\u8DEF\u8D70\u3002<br>
@@ -1123,12 +1307,15 @@ function renderUI(state, host, sp, token, cred, pushToken, protonCred) {
       <div class="sub">
         <button onclick="go('/api/refresh')">\u5237\u65B0 Opera \u51ED\u636E</button>
         <button class="gh" onclick="go('/api/reset-warp')">\u91CD\u6CE8\u518C WARP \u8BBE\u5907</button>
+        <button class="gh" onclick="go('/api/reset-wind')">\u6362 Windscribe \u8D26\u53F7</button>
       </div>
       <div class="note">
         Opera \u51ED\u636E 4 \u5C0F\u65F6\u5230\u671F\u3002<b>\u4E0D\u7528\u5B9A\u65F6\u4EFB\u52A1</b>\u2014\u2014\u8BA2\u9605\u88AB\u8BBF\u95EE\u65F6\u624D\u68C0\u67E5\uFF0C
         \u6CA1\u8FC7\u671F\u76F4\u63A5\u7ED9\u7F13\u5B58\uFF0C\u8FC7\u671F\u4E86\u624D\u91CD\u65B0\u6CE8\u518C\u3002<br>
         \u60F3\u63D0\u524D\u6362\u4E00\u4EFD\u5C31\u70B9\u5237\u65B0\u3002<br>
-        WARP \u8BBE\u5907\u4FE1\u606F\u5B58\u5728 KV \u91CC\u590D\u7528\uFF0C<b>\u4E00\u822C\u4E0D\u7528\u91CD\u6CE8\u518C</b>\uFF0C\u9664\u975E MASQUE \u6574\u4F53\u8FDE\u4E0D\u4E0A\u3002
+        WARP \u8BBE\u5907\u4FE1\u606F\u5B58\u5728 KV \u91CC\u590D\u7528\uFF0C<b>\u4E00\u822C\u4E0D\u7528\u91CD\u6CE8\u518C</b>\uFF0C\u9664\u975E MASQUE \u6574\u4F53\u8FDE\u4E0D\u4E0A\u3002<br>
+        Windscribe \u6BCF\u6708 2GB\uFF0C\u7528\u5B8C\u4E86\u6362\u4E2A\u8D26\u53F7\u5C31\u91CD\u65B0\u6709\u989D\u5EA6\u3002\u522B\u8FDE\u7740\u6362\uFF0C
+        \u540C\u4E00\u4E2A\u51FA\u53E3\u5F00\u6237\u592A\u9891\u7E41\u4F1A\u88AB\u964D\u5230 1MB\u3002
       </div>
     </div>
 
@@ -1154,6 +1341,22 @@ function renderUI(state, host, sp, token, cred, pushToken, protonCred) {
         \u7136\u540E\u8DD1 <b>\u53D6 Proton \u51ED\u636E</b> \u6D41\u6C34\u7EBF\uFF0C\u4E4B\u540E\u6BCF 3 \u5929\u81EA\u52A8\u7EED\uFF0C\u4E0D\u7528\u518D\u7BA1\u3002<br>
         \u5730\u5740\u91CC\u5E26\u4EE4\u724C\uFF0C\u53EA\u80FD\u5199 Proton \u51ED\u636E\u3001\u52A8\u4E0D\u4E86\u7BA1\u7406\u9875\uFF1B\u6CC4\u9732\u4E86\u70B9\u300C\u6362\u4E00\u4E2A\u300D\u3002
         ${protonCred ? `<br><a href="#" onclick="go('/api/proton/clear');return false" style="color:var(--red)">\u6E05\u9664 Proton \u51ED\u636E</a>` : ""}
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">Windscribe \u843D\u5730</div>
+      ${windInfo ? `
+      <div class="row"><span class="k">\u72B6\u6001</span><span class="v ok">\u5DF2\u6CE8\u518C ${windInfo.servers} \u53F0</span></div>
+      <div class="row"><span class="k">\u8D26\u53F7</span><span class="v">${windInfo.userId}</span></div>
+      ${windUsageTxt ? `<div class="row"><span class="k">\u672C\u6708\u6D41\u91CF</span><span class="v ${windPct > 90 ? "warn" : "ok"}">${windUsageTxt}</span></div>` : ""}
+      ` : `
+      <div class="row"><span class="k">\u72B6\u6001</span><span class="v warn">\u672A\u542F\u7528</span></div>
+      `}
+      <div class="note">
+        \u533F\u540D\u6CE8\u518C\uFF0C\u4E0D\u7528\u90AE\u7BB1\uFF0CWorker \u81EA\u5DF1\u5F00\u6237\u3002\u514D\u8D39\u989D\u5EA6 <b>\u6BCF\u6708 2GB</b>\uFF0C
+        \u8D26\u53F7\u5B58\u5728 KV \u91CC\u590D\u7528\u3002<br>
+        \u843D\u5730\u662F\u673A\u623F IP\uFF08M247 \u4E3A\u4E3B\uFF09\uFF0C13 \u4E2A\u5730\u533A\u91CC<b>\u4E9A\u6D32\u53EA\u6709\u9999\u6E2F</b>\u3002
       </div>
     </div>
 
@@ -1359,6 +1562,7 @@ var K_SET = "settings";
 var K_CLAIM = "auth:claim";
 var K_PROTON = "proton:cred";
 var K_PUSH = "proton:token";
+var K_WIND = "wind:account";
 var K_LOCK = "rebuild:lock";
 var COOKIE = "om_session";
 var DEFAULT_SUB = "sub";
@@ -1389,19 +1593,34 @@ async function getWarp(env, force = false) {
   await env.KV.put(K_WARP, JSON.stringify(w));
   return w;
 }
-async function rebuild(env, { forceWarp = false } = {}) {
+async function getWind(env, force = false) {
+  const cached = force ? null : await env.KV.get(K_WIND, "json");
+  const w = await fetchWindscribe(cached);
+  if (!cached || cached.sessionAuthHash !== w.account.sessionAuthHash) {
+    await env.KV.put(K_WIND, JSON.stringify(w.account));
+  }
+  return w;
+}
+async function rebuild(env, { forceWarp = false, forceWind = false } = {}) {
   const warp = await getWarp(env, forceWarp);
   const opera = await fetchOpera();
   let proton = null;
   const pc = await env.KV.get(K_PROTON, "json");
   if (pc && (!pc.expiresAt || pc.expiresAt * 1e3 > Date.now())) proton = pc;
-  const { yaml, entries, landings, combos, proton: pn } = buildConfig(warp, opera, proton);
+  let wind = null;
+  try {
+    wind = await getWind(env, forceWind);
+  } catch (e) {
+    wind = null;
+  }
+  const { yaml, entries, landings, combos, proton: pn, wind: wn } = buildConfig(warp, opera, proton, wind);
   const now = Date.now();
   const state = {
     updatedAt: new Date(now).toISOString(),
     expiresAt: new Date(now + TTL_MS).toISOString(),
-    stats: { entries, landings, combos, proton: pn || 0 },
+    stats: { entries, landings, combos, proton: pn || 0, wind: wn || 0 },
     protonExpiresAt: proton ? proton.expiresAt : null,
+    wind: wind ? { userId: wind.account.userId, servers: wn || 0 } : null,
     warp: {
       deviceId: warp.deviceId,
       ipv4: warp.ipv4,
@@ -1551,6 +1770,15 @@ var index_default = {
       const token = await signToken(cred);
       const pushToken = await env.KV.get(K_PUSH);
       const protonCred = await env.KV.get(K_PROTON, "json");
+      let windUsage = null;
+      const wa = await env.KV.get(K_WIND, "json");
+      if (wa && wa.sessionAuthHash) {
+        try {
+          windUsage = await fetchSession(wa);
+        } catch {
+          windUsage = null;
+        }
+      }
       return html(renderUI(
         state,
         url.host,
@@ -1558,7 +1786,8 @@ var index_default = {
         token,
         cred,
         pushToken,
-        protonCred
+        protonCred,
+        windUsage
       ));
     }
     if (!authed) return notFound();
@@ -1623,6 +1852,17 @@ var index_default = {
       try {
         const s = await rebuild(env, { forceWarp: true });
         return json({ ok: true, msg: `WARP \u5DF2\u91CD\u6CE8\u518C\uFF0C${s.stats.combos} \u4E2A\u7EC4\u5408` });
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500);
+      }
+    }
+    if (path === "/api/reset-wind" && req.method === "POST") {
+      try {
+        const s = await rebuild(env, { forceWind: true });
+        if (!s.wind) {
+          return json({ ok: false, error: "\u5F00\u6237\u6CA1\u6210\u529F\uFF0C\u591A\u534A\u662F\u88AB\u9650\u901F\u4E86\uFF0C\u8FC7\u51E0\u5206\u949F\u518D\u8BD5" }, 500);
+        }
+        return json({ ok: true, msg: `\u5DF2\u6362\u65B0\u8D26\u53F7\uFF0C${s.wind.servers} \u53F0\u843D\u5730` });
       } catch (e) {
         return json({ ok: false, error: e.message }, 500);
       }

@@ -11,6 +11,7 @@ import { registerWarp } from "./warp.js";
 import { fetchOpera } from "./opera.js";
 import { buildConfig } from "./config.js";
 import { parseBlob } from "./proton.js";
+import { fetchWindscribe, fetchSession } from "./windscribe.js";
 import { renderUI, renderLogin, renderSetup, renderNoKV } from "./ui.js";
 import {
   safeEqual, makeCred, checkPassword, signToken, verifyToken,
@@ -25,6 +26,7 @@ const K_SET = "settings";         // 订阅路径等设置
 const K_CLAIM = "auth:claim";     // 初始化时的抢占标记
 const K_PROTON = "proton:cred";   // Proton 凭据（由流水线推送）
 const K_PUSH = "proton:token";    // 流水线的写入令牌
+const K_WIND = "wind:account";    // Windscribe 账号，长期复用（连着开户会被降额）
 const K_LOCK = "rebuild:lock";    // 重建锁，防并发重复注册
 const COOKIE = "om_session";
 const DEFAULT_SUB = "sub";
@@ -68,23 +70,42 @@ async function getWarp(env, force = false) {
   return w;
 }
 
+/** Windscribe 账号复用。同一出口连着开户会被降额到 1MB，
+ *  所以只在 KV 里没有、或者显式要求换号时才注册新的。 */
+async function getWind(env, force = false) {
+  const cached = force ? null : await env.KV.get(K_WIND, "json");
+  const w = await fetchWindscribe(cached);
+  if (!cached || cached.sessionAuthHash !== w.account.sessionAuthHash) {
+    await env.KV.put(K_WIND, JSON.stringify(w.account));
+  }
+  return w;
+}
+
 /** 重建配置。WARP 复用，Opera 每次重取（凭据会过期）。 */
-async function rebuild(env, { forceWarp = false } = {}) {
+async function rebuild(env, { forceWarp = false, forceWind = false } = {}) {
   const warp = await getWarp(env, forceWarp);
   const opera = await fetchOpera();
   // Proton 凭据是流水线推来的，没有就跳过，不影响其他线路
   let proton = null;
   const pc = await env.KV.get(K_PROTON, "json");
   if (pc && (!pc.expiresAt || pc.expiresAt * 1000 > Date.now())) proton = pc;
-  const { yaml, entries, landings, combos, proton: pn } =
-    buildConfig(warp, opera, proton);
+  // Windscribe 拿不到就跳过。它只是多一条线路，不该拖垮整份订阅
+  let wind = null;
+  try {
+    wind = await getWind(env, forceWind);
+  } catch (e) {
+    wind = null;
+  }
+  const { yaml, entries, landings, combos, proton: pn, wind: wn } =
+    buildConfig(warp, opera, proton, wind);
 
   const now = Date.now();
   const state = {
     updatedAt: new Date(now).toISOString(),
     expiresAt: new Date(now + TTL_MS).toISOString(),
-    stats: { entries, landings, combos, proton: pn || 0 },
+    stats: { entries, landings, combos, proton: pn || 0, wind: wn || 0 },
     protonExpiresAt: proton ? proton.expiresAt : null,
+    wind: wind ? { userId: wind.account.userId, servers: wn || 0 } : null,
     warp: {
       deviceId: warp.deviceId,
       ipv4: warp.ipv4,
@@ -268,8 +289,14 @@ export default {
       const token = await signToken(cred);
       const pushToken = await env.KV.get(K_PUSH);
       const protonCred = await env.KV.get(K_PROTON, "json");
+      // 用量是实时问 Windscribe 的，问不到就不显示，不影响页面其他部分
+      let windUsage = null;
+      const wa = await env.KV.get(K_WIND, "json");
+      if (wa && wa.sessionAuthHash) {
+        try { windUsage = await fetchSession(wa); } catch { windUsage = null; }
+      }
       return html(renderUI(state, url.host, subPath, token, cred,
-                           pushToken, protonCred));
+                           pushToken, protonCred, windUsage));
     }
 
     // ---- 以下都要登录。未登录一律 404，不用 401 ----
@@ -349,6 +376,19 @@ export default {
       try {
         const s = await rebuild(env, { forceWarp: true });
         return json({ ok: true, msg: `WARP 已重注册，${s.stats.combos} 个组合` });
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 500);
+      }
+    }
+
+    // 换一个 Windscribe 账号。每月 2GB 用完了才需要，别连着换
+    if (path === "/api/reset-wind" && req.method === "POST") {
+      try {
+        const s = await rebuild(env, { forceWind: true });
+        if (!s.wind) {
+          return json({ ok: false, error: "开户没成功，多半是被限速了，过几分钟再试" }, 500);
+        }
+        return json({ ok: true, msg: `已换新账号，${s.wind.servers} 台落地` });
       } catch (e) {
         return json({ ok: false, error: e.message }, 500);
       }

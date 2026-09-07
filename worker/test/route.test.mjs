@@ -233,5 +233,51 @@ t("新密码能登上",
   t("能清除 Proton 凭据", !kv.get("proton:cred"));
 }
 
+// ---- Windscribe ----
+{
+  reset();
+  await worker.fetch(post("/api/setup", { password: PW, confirm: PW }), env);
+  const c4 = (await worker.fetch(post("/login", { password: PW }), env))
+    .headers.get("set-cookie").split(";")[0];
+  const a4 = { cookie: c4 };
+
+  // 首页要查 Windscribe 用量。接口挂了不能把整个管理页带塌
+  kv.set("wind:account", JSON.stringify({
+    sessionAuthHash: "sah", locHash: "lh", userId: "u1",
+  }));
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error("network down"); };
+  const boom = await worker.fetch(req("/", { headers: a4 }), env);
+  globalThis.fetch = real;
+  t("查用量失败不影响管理页", boom.status === 200);
+
+  // 有用量时按 GB 显示
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    data: { traffic_used: 536870912, traffic_max: 2147483648, status: 1, loc_hash: "lh" },
+  }), { status: 200 });
+  kv.set("state:meta", JSON.stringify({
+    updatedAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 3600e3).toISOString(),
+    stats: { wind: 62 }, warp: {}, wind: { userId: "u1", servers: 62 },
+  }));
+  const okpg = await (await worker.fetch(req("/", { headers: a4 }), env)).text();
+  globalThis.fetch = real;
+  t("显示用量", okpg.includes("0.50 GB") && okpg.includes("2.00 GB"));
+  t("显示账号", okpg.includes("u1"));
+  t("显示落地数", okpg.includes("62"));
+
+  // 没账号时不查，也不该报错
+  reset();
+  await worker.fetch(post("/api/setup", { password: PW, confirm: PW }), env);
+  const c5 = (await worker.fetch(post("/login", { password: PW }), env))
+    .headers.get("set-cookie").split(";")[0];
+  const noacc = await (await worker.fetch(req("/", { headers: { cookie: c5 } }), env)).text();
+  t("没账号显示未启用", noacc.includes("未启用"));
+
+  t("换账号要登录", (await worker.fetch(post("/api/reset-wind", {}), env)).status === 404);
+  t("换账号只认 POST",
+    (await worker.fetch(req("/api/reset-wind", { headers: { cookie: c5 } }), env)).status === 404);
+}
+
 console.log(`\n通过 ${pass} 失败 ${fail}`);
 if (fail) process.exit(1);

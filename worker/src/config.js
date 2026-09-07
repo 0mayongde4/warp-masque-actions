@@ -256,7 +256,7 @@ ${p(picks)}
       - ♻️ 自动选择`;
 }
 
-export function buildConfig(warp, opera, proton) {
+export function buildConfig(warp, opera, proton, wind) {
   const { entries, proxies, v4Entries } = buildEntries(warp);
 
   // 笛卡尔积：任一接入点或任一落地失效，其他组合仍可用
@@ -300,6 +300,34 @@ export function buildConfig(warp, opera, proton) {
     });
   }
 
+  // Windscribe 落地。和 Opera 同构（HTTPS 代理 + Basic），
+  // 但免费额度只有 2GB/月，做笛卡尔积没意义 —— 每台轮一个接入点就够。
+  // 只从 v4Entries 选，理由同 Proton：纯 IPv4 的机器上 v6 接入点不可达。
+  const windNames = [];
+  const windByLoc = {};
+  if (wind && wind.servers && wind.servers.length) {
+    wind.servers.forEach((srv, i) => {
+      const ent = v4Entries[i % v4Entries.length];
+      const name = `WS-${srv.tag}`;
+      windNames.push(name);
+      (windByLoc[srv.loc] = windByLoc[srv.loc] || []).push(name);
+      proxies.push(
+        `  - {name: "${name}", type: http, server: ${srv.host}, port: ${srv.port}, ` +
+        `username: ${wind.username}, password: ${wind.password}, tls: true, ` +
+        `sni: ${srv.host}, skip-cert-verify: false, dialer-proxy: ${ent}}`);
+    });
+  }
+  const windLocNames = Object.keys(windByLoc).map((l) => `WS-${l}`);
+  const windLocDefs = Object.entries(windByLoc).map(([loc, names]) =>
+    `  - name: WS-${loc}
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 100
+    lazy: true
+    proxies:
+${q(names)}`).join("\n\n");
+
   // 组合太多没法平铺选，按地区收成 url-test
   const locNames = Object.keys(byLoc).map((l) => `${l}线路`);
   // 接入点本来就在 proxies 里（做 dialer-proxy 的目标），
@@ -318,6 +346,7 @@ ${q(names)}`).join("\n\n");
 
   const picks = [...locNames, "WARP直连"];
   if (protonNames.length) picks.push("Proton线路", ...protonCCNames);
+  if (windNames.length) picks.push("Windscribe线路", ...windLocNames);
   const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}线路
     type: url-test
     url: http://www.gstatic.com/generate_204
@@ -340,7 +369,7 @@ ${q(tags)}`).join("\n\n");
 # 节点名 "欧洲1@198.1-443" = 欧洲第 1 个落地，经 162.159.198.1:443 接入。
 #
 # 接入点 ${entries.length} 个 x 落地 ${opera.landings.length} 个 = 组合 ${combos} 个，
-# 外加 ${entries.length} 个直连接入点${protonNames.length ? ` 和 ${protonNames.length} 个 Proton 落地` : ""}。
+# 外加 ${entries.length} 个直连接入点${protonNames.length ? ` 和 ${protonNames.length} 个 Proton 落地` : ""}${windNames.length ? ` 和 ${windNames.length} 个 Windscribe 落地` : ""}。
 # 任一环失效都有替代路径。
 #
 # 需要 mihomo Alpha 分支：稳定版没有 masque outbound，也不认 dialer-proxy。
@@ -403,6 +432,23 @@ ${p(protonCCNames)}
 ${q(protonNames)}
 
 ${protonCCDefs}
+` : ""}${windNames.length ? `
+  - name: Windscribe线路
+    type: select
+    proxies:
+      - WS-自动
+${p(windLocNames)}
+
+  - name: WS-自动
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 80
+    lazy: true
+    proxies:
+${q(windNames)}
+
+${windLocDefs}
 ` : ""}
 ${tailGroups(picks)}
 
@@ -417,5 +463,5 @@ ${rules}
 `;
 
   return { yaml, entries: entries.length, landings: opera.landings.length,
-           combos, proton: protonNames.length };
+           combos, proton: protonNames.length, wind: windNames.length };
 }
