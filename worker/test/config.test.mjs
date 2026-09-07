@@ -22,8 +22,8 @@ const groups = [...yaml.matchAll(/^  - name: (.+)$/gm)].map((m) => m[1]);
 const proxyNames = [...yaml.matchAll(/^  - \{name: "([^"]+)"/gm)].map((m) => m[1]);
 const entryNames = [...yaml.matchAll(/^  - name: (\S+)\n    type: masque$/gm)].map((m) => m[1]);
 
-t(`接入点 ${entries} 个`, entries === 41);
-t(`组合 ${combos} 个 (41 x 2)`, combos === 82);
+t(`接入点 ${entries} 个`, entries === 57);
+t(`组合 ${combos} 个 (57 x 2)`, combos === 114);
 t("有 WARP直连 组", groups.includes("WARP直连"));
 t("有三个地区组",
   ["亚洲线路", "欧洲线路"].every((g) => groups.includes(g)));
@@ -31,7 +31,7 @@ t("有三个地区组",
 // WARP直连 组的成员必须都是接入点，不能混进组合节点
 const warpGroup = yaml.split("  - name: WARP直连")[1].split("\n  - name:")[0];
 const members = [...warpGroup.matchAll(/^      - "([^"]+)"$/gm)].map((m) => m[1]);
-t(`WARP直连 有 ${members.length} 个成员`, members.length === 41);
+t(`WARP直连 有 ${members.length} 个成员`, members.length === 57);
 t("成员都是接入点(不含 @)", members.every((m) => !m.includes("@")));
 t("成员都在 proxies 里定义", members.every((m) => entryNames.includes(m)));
 

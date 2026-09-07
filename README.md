@@ -1,11 +1,11 @@
 # WARP MASQUE 配置生成器
 
-一键生成 Cloudflare WARP 的 mihomo 配置，41 个节点，跑在 GitHub Actions 上。
+一键生成 Cloudflare WARP 的 mihomo 配置，57 个节点，跑在 GitHub Actions 上。
 不用自己装环境，不用服务器。
 
 仓库里有两条流水线：
 
-- **生成 WARP MASQUE 配置** — 纯 WARP，41 个节点。下面讲的就是这条。
+- **生成 WARP MASQUE 配置** — 纯 WARP，57 个节点。下面讲的就是这条。
 - **Opera over MASQUE（套娃）** — 在 WARP 外面再叠一层 Opera VPN 落地，
   换个出口国家。见文末[套娃那条](#套娃opera-vpn-叠在-warp-上)。
 
@@ -37,7 +37,7 @@ Fork 过来的仓库默认不开 Actions，会看到一个提示，点
 
 解压出来三个文件：
 
-- `warp-masque.yaml` —— mihomo 配置，41 个节点，直接导入 Clash Verge / ClashMi 这类客户端
+- `warp-masque.yaml` —— mihomo 配置，57 个节点，直接导入 Clash Verge / ClashMi 这类客户端
 - `warp-masque-shadowrocket.txt` —— Shadowrocket 用的 `masque://` 链接，一行一个，挑一条复制进去
 - `usque-config.json` —— 原始密钥，想自己折腾别的客户端时用得上
 
@@ -85,11 +85,11 @@ Surge、Quantumult X、Karing 不是 mihomo 内核，也不认 masque，导进�
 
 ## 关于节点
 
-41 个节点是同一个 WARP 账号的不同接入地址，**出口 IP 是一样的**。
+57 个节点是同一个 WARP 账号的不同接入地址，**出口 IP 是一样的**。
 多节点是为了某个地址被墙时能自动换一个，不是多国家落地。
 想选国家得用 WARP+ 或 ZeroTrust，这个仓库不支持。
 
-里面有 20 个 IPv6 节点，你没 IPv6 的话它们会连不上，但客户端会自动跳过，
+里面有 28 个 IPv6 节点，你没 IPv6 的话它们会连不上，但客户端会自动跳过，
 不影响用。
 
 ## 几个提醒
@@ -139,7 +139,7 @@ uses: actions/upload-artifact@v6
 
 ### 为什么节点延迟不一样，但测速结果都差不多
 
-41 个节点是同一个 WARP 账号的不同接入地址，**出口 IP 是同一个**。
+57 个节点是同一个 WARP 账号的不同接入地址，**出口 IP 是同一个**。
 延迟差异来自你到接入点的网络路径，真正落地的还是那台 Cloudflare 机器。
 
 所以挑延迟最低的用就行，不用一个个试速度。
@@ -209,7 +209,7 @@ Opera 的地址整个封在 QUIC 隧道里。抓包对比过，直连能看到 O
 
 ### 全组合
 
-41 个 MASQUE 接入点和每个 Opera 落地都配一遍。落地通常 9 到 11 个，
+57 个 MASQUE 接入点和每个 Opera 落地都配一遍。落地通常 9 到 11 个，
 最终 400 上下的节点。
 
 这么做是为了任一环失效都还有路走：某个接入点被墙了换个端口或换个段，
