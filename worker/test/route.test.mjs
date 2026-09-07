@@ -179,5 +179,59 @@ t("新密码能登上",
   t("初始无配置时 state 为空", Object.keys(st).length === 0);
 }
 
+// ---- Proton 推送 ----
+{
+  reset();
+  await worker.fetch(post("/api/setup", { password: PW, confirm: PW }), env);
+  const ck = (await worker.fetch(post("/login", { password: PW }), env))
+    .headers.get("set-cookie").split(";")[0];
+  const a3 = { cookie: ck };
+
+  const blob = btoa(JSON.stringify({
+    v: 1, privateKey: "FAKEKEY", expiresAt: Math.floor(Date.now()/1000) + 604800,
+    servers: [{ name: "JP1", cc: "JP", ip: "1.2.3.4", port: 51820, pub: "PUB" }],
+  }));
+  const raw = (p, body) => new Request(`https://x.dev${p}`, {
+    method: "POST", headers: { "cf-connecting-ip": "9.9.9.9" }, body });
+
+  t("没生成令牌时推送 404",
+    (await worker.fetch(raw("/push/anything", blob), env)).status === 404);
+
+  const tr = await (await worker.fetch(post("/api/proton/token", {}, a3), env)).json();
+  t("能生成推送令牌", tr.ok && tr.token && tr.token.length >= 32);
+
+  t("错令牌推送 404",
+    (await worker.fetch(raw("/push/wrongtoken", blob), env)).status === 404);
+  t("未登录也不能拿令牌",
+    (await worker.fetch(post("/api/proton/token", {}), env)).status === 404);
+
+  const bad = await worker.fetch(raw(`/push/${tr.token}`, "not-base64!!"), env);
+  t("坏数据被拒且提示明确", bad.status === 400);
+
+  const expired = btoa(JSON.stringify({
+    v: 1, privateKey: "K", expiresAt: Math.floor(Date.now()/1000) - 10,
+    servers: [{ name: "x", ip: "1.1.1.1", port: 51820, pub: "P" }] }));
+  t("过期凭据被拒",
+    (await worker.fetch(raw(`/push/${tr.token}`, expired), env)).status === 400);
+
+  // 正常推送（rebuild 会联网失败，但凭据应已写入）
+  const okp = await worker.fetch(raw(`/push/${tr.token}`, blob), env);
+  const oj = await okp.json();
+  t("正常推送被接受", okp.status === 200 && oj.ok);
+  t("凭据已落 KV", !!kv.get("proton:cred"));
+  t("KV 里存的是解析后的对象",
+    JSON.parse(kv.get("proton:cred")).servers[0].name === "JP1");
+
+  // 换令牌后旧的失效
+  const tr2 = await (await worker.fetch(post("/api/proton/token", {}, a3), env)).json();
+  t("换令牌后旧令牌失效",
+    (await worker.fetch(raw(`/push/${tr.token}`, blob), env)).status === 404);
+  t("新令牌可用",
+    (await worker.fetch(raw(`/push/${tr2.token}`, blob), env)).status === 200);
+
+  await worker.fetch(post("/api/proton/clear", {}, a3), env);
+  t("能清除 Proton 凭据", !kv.get("proton:cred"));
+}
+
 console.log(`\n通过 ${pass} 失败 ${fail}`);
 if (fail) process.exit(1);

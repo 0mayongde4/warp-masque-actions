@@ -251,7 +251,7 @@ ${p(picks)}
       - ♻️ 自动选择`;
 }
 
-export function buildConfig(warp, opera) {
+export function buildConfig(warp, opera, proton) {
   const { entries, proxies } = buildEntries(warp);
 
   // 笛卡尔积：任一接入点或任一落地失效，其他组合仍可用
@@ -268,11 +268,34 @@ export function buildConfig(warp, opera) {
   }
   const combos = Object.values(byLoc).reduce((a, b) => a + b.length, 0);
 
+  // Proton 落地。28 台 x 41 接入点会爆到上千节点，没必要，
+  // 每台轮着分一个接入点即可，接入点挂了还有其他 Proton 节点顶。
+  let protonNames = [];
+  if (proton && proton.servers && proton.servers.length) {
+    proton.servers.forEach((srv, i) => {
+      const ent = entries[i % entries.length];
+      protonNames.push(srv.name);
+      proxies.push(`  - name: "${srv.name}"
+    type: wireguard
+    server: ${srv.ip}
+    port: ${srv.port}
+    ip: 10.2.0.2
+    private-key: ${proton.privateKey}
+    public-key: ${srv.pub}
+    udp: true
+    mtu: 1280
+    remote-dns-resolve: true
+    dns: [10.2.0.1]
+    dialer-proxy: ${ent}`);
+    });
+  }
+
   // 组合太多没法平铺选，按地区收成 url-test
   const locNames = Object.keys(byLoc).map((l) => `${l}线路`);
   // 接入点本来就在 proxies 里（做 dialer-proxy 的目标），
   // 顺手暴露成一个直连组：套娃慢或落地挂了就切这个，一份订阅够用
   const picks = [...locNames, "WARP直连"];
+  if (protonNames.length) picks.push("Proton线路");
   const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}线路
     type: url-test
     url: http://www.gstatic.com/generate_204
@@ -295,7 +318,8 @@ ${q(tags)}`).join("\n\n");
 # 节点名 "欧洲1@198.1-443" = 欧洲第 1 个落地，经 162.159.198.1:443 接入。
 #
 # 接入点 ${entries.length} 个 x 落地 ${opera.landings.length} 个 = 组合 ${combos} 个，
-# 外加 ${entries.length} 个直连接入点。任一环失效都有替代路径。
+# 外加 ${entries.length} 个直连接入点${protonNames.length ? ` 和 ${protonNames.length} 个 Proton 落地` : ""}。
+# 任一环失效都有替代路径。
 #
 # 需要 mihomo Alpha 分支：稳定版没有 masque outbound，也不认 dialer-proxy。
 # private-key 等同 WARP 账号凭据，别外传。
@@ -340,7 +364,16 @@ ${locDefs}
     lazy: true
     proxies:
 ${q(entries)}
-
+${protonNames.length ? `
+  - name: Proton线路
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 80
+    lazy: true
+    proxies:
+${q(protonNames)}
+` : ""}
 ${tailGroups(picks)}
 
 rule-providers:
@@ -353,5 +386,6 @@ ${rules}
   - MATCH,🐟 漏网之鱼
 `;
 
-  return { yaml, entries: entries.length, landings: opera.landings.length, combos };
+  return { yaml, entries: entries.length, landings: opera.landings.length,
+           combos, proton: protonNames.length };
 }

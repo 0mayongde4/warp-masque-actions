@@ -612,7 +612,7 @@ ${p(picks)}
       - \u{1F3AF} \u5168\u7403\u76F4\u8FDE
       - \u267B\uFE0F \u81EA\u52A8\u9009\u62E9`;
 }
-function buildConfig(warp, opera) {
+function buildConfig(warp, opera, proton) {
   const { entries, proxies } = buildEntries(warp);
   const byLoc = {};
   for (const land of opera.landings) {
@@ -625,8 +625,28 @@ function buildConfig(warp, opera) {
     }
   }
   const combos = Object.values(byLoc).reduce((a, b) => a + b.length, 0);
+  let protonNames = [];
+  if (proton && proton.servers && proton.servers.length) {
+    proton.servers.forEach((srv, i) => {
+      const ent = entries[i % entries.length];
+      protonNames.push(srv.name);
+      proxies.push(`  - name: "${srv.name}"
+    type: wireguard
+    server: ${srv.ip}
+    port: ${srv.port}
+    ip: 10.2.0.2
+    private-key: ${proton.privateKey}
+    public-key: ${srv.pub}
+    udp: true
+    mtu: 1280
+    remote-dns-resolve: true
+    dns: [10.2.0.1]
+    dialer-proxy: ${ent}`);
+    });
+  }
   const locNames = Object.keys(byLoc).map((l) => `${l}\u7EBF\u8DEF`);
   const picks = [...locNames, "WARP\u76F4\u8FDE"];
+  if (protonNames.length) picks.push("Proton\u7EBF\u8DEF");
   const locDefs = Object.entries(byLoc).map(([loc, tags]) => `  - name: ${loc}\u7EBF\u8DEF
     type: url-test
     url: http://www.gstatic.com/generate_204
@@ -647,7 +667,8 @@ ${q(tags)}`).join("\n\n");
 # \u8282\u70B9\u540D "\u6B27\u6D321@198.1-443" = \u6B27\u6D32\u7B2C 1 \u4E2A\u843D\u5730\uFF0C\u7ECF 162.159.198.1:443 \u63A5\u5165\u3002
 #
 # \u63A5\u5165\u70B9 ${entries.length} \u4E2A x \u843D\u5730 ${opera.landings.length} \u4E2A = \u7EC4\u5408 ${combos} \u4E2A\uFF0C
-# \u5916\u52A0 ${entries.length} \u4E2A\u76F4\u8FDE\u63A5\u5165\u70B9\u3002\u4EFB\u4E00\u73AF\u5931\u6548\u90FD\u6709\u66FF\u4EE3\u8DEF\u5F84\u3002
+# \u5916\u52A0 ${entries.length} \u4E2A\u76F4\u8FDE\u63A5\u5165\u70B9${protonNames.length ? ` \u548C ${protonNames.length} \u4E2A Proton \u843D\u5730` : ""}\u3002
+# \u4EFB\u4E00\u73AF\u5931\u6548\u90FD\u6709\u66FF\u4EE3\u8DEF\u5F84\u3002
 #
 # \u9700\u8981 mihomo Alpha \u5206\u652F\uFF1A\u7A33\u5B9A\u7248\u6CA1\u6709 masque outbound\uFF0C\u4E5F\u4E0D\u8BA4 dialer-proxy\u3002
 # private-key \u7B49\u540C WARP \u8D26\u53F7\u51ED\u636E\uFF0C\u522B\u5916\u4F20\u3002
@@ -692,7 +713,16 @@ ${locDefs}
     lazy: true
     proxies:
 ${q(entries)}
-
+${protonNames.length ? `
+  - name: Proton\u7EBF\u8DEF
+    type: url-test
+    url: http://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 80
+    lazy: true
+    proxies:
+${q(protonNames)}
+` : ""}
 ${tailGroups(picks)}
 
 rule-providers:
@@ -704,7 +734,33 @@ ${rules}
   - GEOIP,CN,\u{1F3AF} \u5168\u7403\u76F4\u8FDE
   - MATCH,\u{1F41F} \u6F0F\u7F51\u4E4B\u9C7C
 `;
-  return { yaml, entries: entries.length, landings: opera.landings.length, combos };
+  return {
+    yaml,
+    entries: entries.length,
+    landings: opera.landings.length,
+    combos,
+    proton: protonNames.length
+  };
+}
+
+// src/proton.js
+function parseBlob(text) {
+  const raw = String(text || "").trim().replace(/\s+/g, "");
+  if (!raw) throw new Error("\u5185\u5BB9\u4E3A\u7A7A");
+  let obj;
+  try {
+    obj = JSON.parse(atob(raw));
+  } catch {
+    throw new Error("\u89E3\u6790\u5931\u8D25\uFF0C\u786E\u8BA4\u590D\u5236\u5B8C\u6574\u4E86\uFF08\u5E94\u8BE5\u662F\u4E00\u957F\u4E32\u5B57\u6BCD\u6570\u5B57\uFF0C\u6CA1\u6709\u6362\u884C\uFF09");
+  }
+  if (obj.v !== 1) throw new Error(`\u4E0D\u8BA4\u8BC6\u7684\u7248\u672C v${obj.v}\uFF0C\u6D41\u6C34\u7EBF\u548C Worker \u7248\u672C\u5BF9\u4E0D\u4E0A`);
+  if (!obj.privateKey || !Array.isArray(obj.servers) || !obj.servers.length) {
+    throw new Error("\u5185\u5BB9\u4E0D\u5B8C\u6574\uFF0C\u91CD\u8DD1\u4E00\u6B21\u6D41\u6C34\u7EBF");
+  }
+  if (obj.expiresAt && obj.expiresAt * 1e3 < Date.now()) {
+    throw new Error("\u8FD9\u4EFD\u51ED\u636E\u5DF2\u7ECF\u8FC7\u671F\u4E86\uFF0C\u91CD\u8DD1\u6D41\u6C34\u7EBF\u62FF\u65B0\u7684");
+  }
+  return obj;
 }
 
 // src/ui.js
@@ -899,7 +955,7 @@ async function go(e){
 <\/script>
 </body></html>`;
 }
-function renderUI(state, host, sp, token, cred) {
+function renderUI(state, host, sp, token, cred, pushToken, protonCred) {
   const s = state || {};
   const warp = s.warp || {};
   const stat = s.stats || {};
@@ -910,6 +966,9 @@ function renderUI(state, host, sp, token, cred) {
   const leftTxt = left === null ? "\u2014" : left <= 0 ? "\u5DF2\u8FC7\u671F\uFF0C\u4E0B\u6B21\u8BBF\u95EE\u8BA2\u9605\u65F6\u81EA\u52A8\u91CD\u5EFA" : `${Math.floor(left / 60)} \u5C0F\u65F6 ${left % 60} \u5206\u540E\u8FC7\u671F`;
   const fmt = (d) => d ? d.toISOString().replace("T", " ").slice(0, 19) + " UTC" : "\u2014";
   const sub = `https://${host}${sp}?token=${token}`;
+  const pushUrl = pushToken ? `https://${host}/push/${pushToken}` : "";
+  const pExp = protonCred && protonCred.expiresAt ? new Date(protonCred.expiresAt * 1e3) : null;
+  const pLeft = pExp ? Math.floor((pExp.getTime() - Date.now()) / 864e5) : null;
   const row = (k, v, cls = "") => `<div class="row"><span class="k">${k}</span><span class="v ${cls}">${v}</span></div>`;
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head>
@@ -1002,6 +1061,7 @@ function renderUI(state, host, sp, token, cred) {
         \u4E00\u4EFD\u805A\u5408\uFF0C\u5BFC\u8FDB\u53BB\u6709\u4E24\u7C7B\u7EBF\u8DEF\u53EF\u5207\uFF1A<br>
         <b>\u4E9A\u6D32/\u6B27\u6D32/\u7F8E\u6D32\u7EBF\u8DEF</b> \u2014 \u8D70 MASQUE \u518D\u843D Opera\uFF0C\u80FD\u6362\u51FA\u53E3\u56FD\u5BB6\uFF0C\u4F46\u591A\u4E00\u8DF3\u4F1A\u6162\u4E9B\u3002<br>
         <b>WARP\u76F4\u8FDE</b> \u2014 \u53EA\u8D70 MASQUE\uFF0C\u51FA\u53E3\u662F Cloudflare \u81EA\u5DF1\u7684 IP\uFF0C\u5FEB\u4F46\u9009\u4E0D\u4E86\u56FD\u5BB6\u3002<br>
+        <b>Proton\u7EBF\u8DEF</b> \u2014 MASQUE \u6253\u5E95 + Proton WireGuard \u843D\u5730\uFF0C10 \u4E2A\u56FD\u5BB6\uFF08\u914D\u7F6E\u540E\u51FA\u73B0\uFF09\u3002<br>
         \u5957\u5A03\u7EBF\u8DEF\u8D85\u65F6\u6216\u843D\u5730\u6302\u4E86\uFF0C\u5207 WARP\u76F4\u8FDE\u9876\u4E0A\u3002
       </div>
       <div id="msg"></div>
@@ -1014,6 +1074,7 @@ function renderUI(state, host, sp, token, cred) {
         <div class="cell"><div class="n">${stat.entries ?? "\u2014"}</div><div class="l">MASQUE \u63A5\u5165\u70B9</div></div>
         <div class="cell"><div class="n">${stat.landings ?? "\u2014"}</div><div class="l">Opera \u843D\u5730</div></div>
         <div class="cell"><div class="n">${stat.entries ?? "\u2014"}</div><div class="l">WARP \u76F4\u8FDE</div></div>
+        <div class="cell"><div class="n">${stat.proton || "\u2014"}</div><div class="l">Proton \u843D\u5730</div></div>
       </div>
       <div class="note">
         \u6BCF\u4E2A\u843D\u5730\u548C\u6BCF\u4E2A\u63A5\u5165\u70B9\u90FD\u7EC4\u5408\u4E00\u904D\uFF0C\u4EFB\u4E00\u73AF\u5931\u6548\u90FD\u8FD8\u6709\u522B\u7684\u8DEF\u8D70\u3002<br>
@@ -1047,6 +1108,31 @@ function renderUI(state, host, sp, token, cred) {
         \u6CA1\u8FC7\u671F\u76F4\u63A5\u7ED9\u7F13\u5B58\uFF0C\u8FC7\u671F\u4E86\u624D\u91CD\u65B0\u6CE8\u518C\u3002<br>
         \u60F3\u63D0\u524D\u6362\u4E00\u4EFD\u5C31\u70B9\u5237\u65B0\u3002<br>
         WARP \u8BBE\u5907\u4FE1\u606F\u5B58\u5728 KV \u91CC\u590D\u7528\uFF0C<b>\u4E00\u822C\u4E0D\u7528\u91CD\u6CE8\u518C</b>\uFF0C\u9664\u975E MASQUE \u6574\u4F53\u8FDE\u4E0D\u4E0A\u3002
+      </div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-t">Proton \u843D\u5730</div>
+      ${protonCred ? `
+      <div class="row"><span class="k">\u72B6\u6001</span><span class="v ok">\u5DF2\u914D\u7F6E ${protonCred.servers.length} \u53F0</span></div>
+      <div class="row"><span class="k">\u8BC1\u4E66\u5269\u4F59</span><span class="v ${pLeft <= 1 ? "warn" : "ok"}">${pLeft} \u5929\uFF08${pExp.toISOString().slice(0, 10)} \u5230\u671F\uFF09</span></div>
+      ` : `
+      <div class="row"><span class="k">\u72B6\u6001</span><span class="v warn">\u672A\u914D\u7F6E</span></div>
+      `}
+      <div class="note" style="margin-bottom:10px">
+        Proton \u8981\u8D26\u53F7\u767B\u5F55\uFF0CWorker \u91CC\u505A\u4F1A\u88AB\u98CE\u63A7\u62E6\uFF0C\u6240\u4EE5\u8D70 GitHub Actions \u53D6\u8BC1\u4E66\u518D\u63A8\u8FC7\u6765\u3002
+        \u8BC1\u4E66<b>\u6700\u957F 7 \u5929</b>\uFF0C\u5230\u671F\u91CD\u8DD1\u4E00\u6B21\u6D41\u6C34\u7EBF\u5373\u53EF\u3002
+      </div>
+      <div class="sub">
+        <input id="pu" value="${pushUrl || "\u70B9\u53F3\u8FB9\u751F\u6210"}" readonly>
+        <button onclick="cp('pu')">\u590D\u5236</button>
+        <button class="gh" onclick="go('/api/proton/token')">${pushToken ? "\u6362\u4E00\u4E2A" : "\u751F\u6210"}</button>
+      </div>
+      <div class="note">
+        \u628A\u8FD9\u4E2A\u5730\u5740\u586B\u8FDB GitHub \u4ED3\u5E93 Secrets \u7684 <b>WORKER_PUSH_URL</b>\uFF0C\u5C31\u8FD9\u4E00\u4E2A\u3002<br>
+        \u7136\u540E\u8DD1 <b>\u53D6 Proton \u51ED\u636E</b> \u6D41\u6C34\u7EBF\uFF0C\u4E4B\u540E\u6BCF 3 \u5929\u81EA\u52A8\u7EED\uFF0C\u4E0D\u7528\u518D\u7BA1\u3002<br>
+        \u5730\u5740\u91CC\u5E26\u4EE4\u724C\uFF0C\u53EA\u80FD\u5199 Proton \u51ED\u636E\u3001\u52A8\u4E0D\u4E86\u7BA1\u7406\u9875\uFF1B\u6CC4\u9732\u4E86\u70B9\u300C\u6362\u4E00\u4E2A\u300D\u3002
+        ${protonCred ? `<br><a href="#" onclick="go('/api/proton/clear');return false" style="color:var(--red)">\u6E05\u9664 Proton \u51ED\u636E</a>` : ""}
       </div>
     </div>
 
@@ -1250,6 +1336,8 @@ var K_STATE = "state:meta";
 var K_CRED = "auth:cred";
 var K_SET = "settings";
 var K_CLAIM = "auth:claim";
+var K_PROTON = "proton:cred";
+var K_PUSH = "proton:token";
 var K_LOCK = "rebuild:lock";
 var COOKIE = "om_session";
 var DEFAULT_SUB = "sub";
@@ -1283,12 +1371,16 @@ async function getWarp(env, force = false) {
 async function rebuild(env, { forceWarp = false } = {}) {
   const warp = await getWarp(env, forceWarp);
   const opera = await fetchOpera();
-  const { yaml, entries, landings, combos } = buildConfig(warp, opera);
+  let proton = null;
+  const pc = await env.KV.get(K_PROTON, "json");
+  if (pc && (!pc.expiresAt || pc.expiresAt * 1e3 > Date.now())) proton = pc;
+  const { yaml, entries, landings, combos, proton: pn } = buildConfig(warp, opera, proton);
   const now = Date.now();
   const state = {
     updatedAt: new Date(now).toISOString(),
     expiresAt: new Date(now + TTL_MS).toISOString(),
-    stats: { entries, landings, combos },
+    stats: { entries, landings, combos, proton: pn || 0 },
+    protonExpiresAt: proton ? proton.expiresAt : null,
     warp: {
       deviceId: warp.deviceId,
       ipv4: warp.ipv4,
@@ -1382,6 +1474,30 @@ var index_default = {
         }
       });
     }
+    if (path.startsWith("/push/") && req.method === "POST") {
+      const tk = await env.KV.get(K_PUSH);
+      const got = path.slice(6);
+      if (!tk || !got || !safeEqual(got, tk)) return notFound();
+      const body = await req.text();
+      let parsed;
+      try {
+        parsed = parseBlob(body);
+      } catch (e) {
+        return json({ ok: false, error: e.message }, 400);
+      }
+      await env.KV.put(K_PROTON, JSON.stringify(parsed));
+      try {
+        const st = await rebuild(env);
+        return json({
+          ok: true,
+          msg: `\u5DF2\u5199\u5165 ${parsed.servers.length} \u53F0 Proton \u843D\u5730`,
+          combos: st.stats.combos,
+          proton: st.stats.proton
+        });
+      } catch (e) {
+        return json({ ok: true, msg: "\u51ED\u636E\u5DF2\u5199\u5165\uFF0C\u4F46\u91CD\u5EFA\u914D\u7F6E\u5931\u8D25\uFF1A" + e.message });
+      }
+    }
     if (path === "/login" && req.method === "POST") {
       if (!await rateLimit(env, ip)) {
         return json({ ok: false, error: "\u5C1D\u8BD5\u8FC7\u591A\uFF0C15 \u5206\u949F\u540E\u518D\u8BD5" }, 429);
@@ -1412,11 +1528,34 @@ var index_default = {
       if (!authed) return html(renderLogin());
       const state = await env.KV.get(K_STATE, "json");
       const token = await signToken(cred);
-      return html(renderUI(state, url.host, subPath, token, cred));
+      const pushToken = await env.KV.get(K_PUSH);
+      const protonCred = await env.KV.get(K_PROTON, "json");
+      return html(renderUI(
+        state,
+        url.host,
+        subPath,
+        token,
+        cred,
+        pushToken,
+        protonCred
+      ));
     }
     if (!authed) return notFound();
     if (path === "/api/state") {
       return json(await env.KV.get(K_STATE, "json") || {});
+    }
+    if (path === "/api/proton/token" && req.method === "POST") {
+      const t = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+      await env.KV.put(K_PUSH, t);
+      return json({ ok: true, token: t, msg: "\u4EE4\u724C\u5DF2\u66F4\u65B0\uFF0C\u65E7\u7684\u7ACB\u5373\u5931\u6548" });
+    }
+    if (path === "/api/proton/clear" && req.method === "POST") {
+      await env.KV.delete(K_PROTON);
+      try {
+        await rebuild(env);
+      } catch {
+      }
+      return json({ ok: true, msg: "Proton \u51ED\u636E\u5DF2\u6E05\u9664" });
     }
     if (path === "/api/sub-path" && req.method === "POST") {
       const body = await req.json().catch(() => ({}));
