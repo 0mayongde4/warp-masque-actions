@@ -316,7 +316,7 @@ export function renderUI(state, host, sp, token, cred, pushToken, protonCred, wi
         <b>亚洲/欧洲/美洲线路</b> — 走 MASQUE 再落 Opera，能换出口国家，但多一跳会慢些。<br>
         <b>WARP直连</b> — 只走 MASQUE，出口是 Cloudflare 自己的 IP，快但选不了国家。<br>
         <b>Proton线路</b> — MASQUE 打底 + Proton WireGuard 落地，10 个国家（配置后出现）。<br>
-        <b>Windscribe线路</b> — MASQUE 打底 + Windscribe 落地，13 个地区，有香港。<br>
+        <b>Windscribe线路</b> — MASQUE 打底 + Windscribe 落地，13 个地区，有香港（配置后出现）。<br>
         套娃线路超时或落地挂了，切 WARP直连顶上。
       </div>
       <div id="msg"></div>
@@ -355,15 +355,12 @@ export function renderUI(state, host, sp, token, cred, pushToken, protonCred, wi
       <div class="sub">
         <button onclick="go('/api/refresh')">刷新 Opera 凭据</button>
         <button class="gh" onclick="go('/api/reset-warp')">重注册 WARP 设备</button>
-        <button class="gh" onclick="go('/api/reset-wind')">换 Windscribe 账号</button>
       </div>
       <div class="note">
         Opera 凭据 4 小时到期。<b>不用定时任务</b>——订阅被访问时才检查，
         没过期直接给缓存，过期了才重新注册。<br>
         想提前换一份就点刷新。<br>
-        WARP 设备信息存在 KV 里复用，<b>一般不用重注册</b>，除非 MASQUE 整体连不上。<br>
-        Windscribe 每月 2GB，用完了换个账号就重新有额度。别连着换，
-        同一个出口开户太频繁会被降到 1MB。
+        WARP 设备信息存在 KV 里复用，<b>一般不用重注册</b>，除非 MASQUE 整体连不上。
       </div>
     </div>
 
@@ -391,6 +388,7 @@ export function renderUI(state, host, sp, token, cred, pushToken, protonCred, wi
       <div class="note">
         把这个地址填进 GitHub 仓库 Secrets 的 <b>WORKER_PUSH_URL</b>，就这一个。<br>
         然后跑 <b>取 Proton 凭据</b> 流水线，之后每 3 天自动续，不用再管。<br>
+        <b>取 Windscribe 账号</b> 那条也用同一个地址，它会自己在末尾加 <code>/wind</code>。<br>
         地址里带令牌，只能写 Proton 凭据、动不了管理页；泄露了点「换一个」。
         ${protonCred ? '<br><a href="#" onclick="go(\'/api/proton/clear\');return false" ' +
           'style="color:var(--red)">清除 Proton 凭据</a>' : ""}
@@ -409,9 +407,15 @@ export function renderUI(state, host, sp, token, cred, pushToken, protonCred, wi
       <div class="row"><span class="k">状态</span><span class="v warn">未启用</span></div>
       `}
       <div class="note">
-        匿名注册，不用邮箱，Worker 自己开户。免费额度 <b>每月 2GB</b>，
-        账号存在 KV 里复用。<br>
-        落地是机房 IP（M247 为主），13 个地区里<b>亚洲只有香港</b>。
+        免费额度 <b>每月 2GB</b>，落地是机房 IP（M247 为主），
+        13 个地区里<b>亚洲只有香港</b>。<br>
+        账号走 GitHub Actions 开 —— Worker 自己开不出能用的号，
+        Cloudflare 的出口 IP 是共享的，早被人用过，
+        Windscribe 只会发 1MB 的降额号，那种号连代理凭据都取不到。<br>
+        跑一次 <b>取 Windscribe 账号</b> 流水线就行，用的是上面那个推送地址。
+        额度用完了再跑一次换个号。
+        ${windInfo ? '<br><a href="#" onclick="go(\'/api/wind/clear\');return false" ' +
+          'style="color:var(--red)">清除 Windscribe 账号</a>' : ""}
       </div>
     </div>
 

@@ -971,18 +971,6 @@ function authHash() {
   const t = Math.floor(Date.now() / 1e3);
   return { hash: md5Hex(CLIENT_AUTH_SECRET + String(t)), time: t };
 }
-function randName(n) {
-  const a = new Uint8Array(n);
-  crypto.getRandomValues(a);
-  const cs = "abcdefghijklmnopqrstuvwxyz0123456789";
-  return [...a].map((b) => cs[b % cs.length]).join("");
-}
-function randPass() {
-  const a = new Uint8Array(16);
-  crypto.getRandomValues(a);
-  const cs = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  return [...a].map((b) => cs[b % cs.length]).join("") + "!aA9";
-}
 async function call(url, init) {
   const r = await fetch(url, { ...init, headers: { ...H3, ...init?.headers || {} } });
   const text = await r.text();
@@ -997,34 +985,6 @@ async function call(url, init) {
     throw new Error(`Windscribe ${r.status}: ${msg}`);
   }
   return j.data;
-}
-async function registerWindscribe() {
-  const { hash, time } = authHash();
-  const username = "u" + randName(9);
-  const password = randPass();
-  const d = await call(`${API2}/Users`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_auth_hash: hash,
-      time: String(time),
-      session_type_id: "2",
-      username,
-      password
-    }).toString()
-  });
-  if (d.status !== 1) {
-    throw new Error(`\u8D26\u53F7\u72B6\u6001\u5F02\u5E38 status=${d.status}\uFF0C\u591A\u534A\u662F\u8FD9\u4E2A\u51FA\u53E3 IP \u5F00\u6237\u592A\u9891\u7E41`);
-  }
-  return {
-    username,
-    password,
-    userId: d.user_id,
-    sessionAuthHash: d.session_auth_hash,
-    locHash: d.loc_hash,
-    trafficMax: d.traffic_max,
-    registeredAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
 }
 async function fetchCredentials(acc) {
   const { hash, time } = authHash();
@@ -1073,10 +1033,14 @@ async function fetchServers(acc) {
   return out;
 }
 async function fetchWindscribe(account) {
-  const acc = account && account.sessionAuthHash ? account : await registerWindscribe();
-  const cred = await fetchCredentials(acc);
-  const servers = await fetchServers(acc);
-  return { account: acc, ...cred, servers };
+  if (!account || !account.sessionAuthHash) {
+    throw new Error("\u6CA1\u6709 Windscribe \u8D26\u53F7\uFF0C\u8DD1\u4E00\u6B21\u6D41\u6C34\u7EBF\u63A8\u4E00\u4E2A\u8FC7\u6765");
+  }
+  const [cred, servers] = await Promise.all([
+    fetchCredentials(account),
+    fetchServers(account)
+  ]);
+  return { account, ...cred, servers };
 }
 
 // src/ui.js
@@ -1382,7 +1346,7 @@ function renderUI(state, host, sp, token, cred, pushToken, protonCred, windUsage
         <b>\u4E9A\u6D32/\u6B27\u6D32/\u7F8E\u6D32\u7EBF\u8DEF</b> \u2014 \u8D70 MASQUE \u518D\u843D Opera\uFF0C\u80FD\u6362\u51FA\u53E3\u56FD\u5BB6\uFF0C\u4F46\u591A\u4E00\u8DF3\u4F1A\u6162\u4E9B\u3002<br>
         <b>WARP\u76F4\u8FDE</b> \u2014 \u53EA\u8D70 MASQUE\uFF0C\u51FA\u53E3\u662F Cloudflare \u81EA\u5DF1\u7684 IP\uFF0C\u5FEB\u4F46\u9009\u4E0D\u4E86\u56FD\u5BB6\u3002<br>
         <b>Proton\u7EBF\u8DEF</b> \u2014 MASQUE \u6253\u5E95 + Proton WireGuard \u843D\u5730\uFF0C10 \u4E2A\u56FD\u5BB6\uFF08\u914D\u7F6E\u540E\u51FA\u73B0\uFF09\u3002<br>
-        <b>Windscribe\u7EBF\u8DEF</b> \u2014 MASQUE \u6253\u5E95 + Windscribe \u843D\u5730\uFF0C13 \u4E2A\u5730\u533A\uFF0C\u6709\u9999\u6E2F\u3002<br>
+        <b>Windscribe\u7EBF\u8DEF</b> \u2014 MASQUE \u6253\u5E95 + Windscribe \u843D\u5730\uFF0C13 \u4E2A\u5730\u533A\uFF0C\u6709\u9999\u6E2F\uFF08\u914D\u7F6E\u540E\u51FA\u73B0\uFF09\u3002<br>
         \u5957\u5A03\u7EBF\u8DEF\u8D85\u65F6\u6216\u843D\u5730\u6302\u4E86\uFF0C\u5207 WARP\u76F4\u8FDE\u9876\u4E0A\u3002
       </div>
       <div id="msg"></div>
@@ -1424,15 +1388,12 @@ function renderUI(state, host, sp, token, cred, pushToken, protonCred, windUsage
       <div class="sub">
         <button onclick="go('/api/refresh')">\u5237\u65B0 Opera \u51ED\u636E</button>
         <button class="gh" onclick="go('/api/reset-warp')">\u91CD\u6CE8\u518C WARP \u8BBE\u5907</button>
-        <button class="gh" onclick="go('/api/reset-wind')">\u6362 Windscribe \u8D26\u53F7</button>
       </div>
       <div class="note">
         Opera \u51ED\u636E 4 \u5C0F\u65F6\u5230\u671F\u3002<b>\u4E0D\u7528\u5B9A\u65F6\u4EFB\u52A1</b>\u2014\u2014\u8BA2\u9605\u88AB\u8BBF\u95EE\u65F6\u624D\u68C0\u67E5\uFF0C
         \u6CA1\u8FC7\u671F\u76F4\u63A5\u7ED9\u7F13\u5B58\uFF0C\u8FC7\u671F\u4E86\u624D\u91CD\u65B0\u6CE8\u518C\u3002<br>
         \u60F3\u63D0\u524D\u6362\u4E00\u4EFD\u5C31\u70B9\u5237\u65B0\u3002<br>
-        WARP \u8BBE\u5907\u4FE1\u606F\u5B58\u5728 KV \u91CC\u590D\u7528\uFF0C<b>\u4E00\u822C\u4E0D\u7528\u91CD\u6CE8\u518C</b>\uFF0C\u9664\u975E MASQUE \u6574\u4F53\u8FDE\u4E0D\u4E0A\u3002<br>
-        Windscribe \u6BCF\u6708 2GB\uFF0C\u7528\u5B8C\u4E86\u6362\u4E2A\u8D26\u53F7\u5C31\u91CD\u65B0\u6709\u989D\u5EA6\u3002\u522B\u8FDE\u7740\u6362\uFF0C
-        \u540C\u4E00\u4E2A\u51FA\u53E3\u5F00\u6237\u592A\u9891\u7E41\u4F1A\u88AB\u964D\u5230 1MB\u3002
+        WARP \u8BBE\u5907\u4FE1\u606F\u5B58\u5728 KV \u91CC\u590D\u7528\uFF0C<b>\u4E00\u822C\u4E0D\u7528\u91CD\u6CE8\u518C</b>\uFF0C\u9664\u975E MASQUE \u6574\u4F53\u8FDE\u4E0D\u4E0A\u3002
       </div>
     </div>
 
@@ -1456,6 +1417,7 @@ function renderUI(state, host, sp, token, cred, pushToken, protonCred, windUsage
       <div class="note">
         \u628A\u8FD9\u4E2A\u5730\u5740\u586B\u8FDB GitHub \u4ED3\u5E93 Secrets \u7684 <b>WORKER_PUSH_URL</b>\uFF0C\u5C31\u8FD9\u4E00\u4E2A\u3002<br>
         \u7136\u540E\u8DD1 <b>\u53D6 Proton \u51ED\u636E</b> \u6D41\u6C34\u7EBF\uFF0C\u4E4B\u540E\u6BCF 3 \u5929\u81EA\u52A8\u7EED\uFF0C\u4E0D\u7528\u518D\u7BA1\u3002<br>
+        <b>\u53D6 Windscribe \u8D26\u53F7</b> \u90A3\u6761\u4E5F\u7528\u540C\u4E00\u4E2A\u5730\u5740\uFF0C\u5B83\u4F1A\u81EA\u5DF1\u5728\u672B\u5C3E\u52A0 <code>/wind</code>\u3002<br>
         \u5730\u5740\u91CC\u5E26\u4EE4\u724C\uFF0C\u53EA\u80FD\u5199 Proton \u51ED\u636E\u3001\u52A8\u4E0D\u4E86\u7BA1\u7406\u9875\uFF1B\u6CC4\u9732\u4E86\u70B9\u300C\u6362\u4E00\u4E2A\u300D\u3002
         ${protonCred ? `<br><a href="#" onclick="go('/api/proton/clear');return false" style="color:var(--red)">\u6E05\u9664 Proton \u51ED\u636E</a>` : ""}
       </div>
@@ -1471,9 +1433,14 @@ function renderUI(state, host, sp, token, cred, pushToken, protonCred, windUsage
       <div class="row"><span class="k">\u72B6\u6001</span><span class="v warn">\u672A\u542F\u7528</span></div>
       `}
       <div class="note">
-        \u533F\u540D\u6CE8\u518C\uFF0C\u4E0D\u7528\u90AE\u7BB1\uFF0CWorker \u81EA\u5DF1\u5F00\u6237\u3002\u514D\u8D39\u989D\u5EA6 <b>\u6BCF\u6708 2GB</b>\uFF0C
-        \u8D26\u53F7\u5B58\u5728 KV \u91CC\u590D\u7528\u3002<br>
-        \u843D\u5730\u662F\u673A\u623F IP\uFF08M247 \u4E3A\u4E3B\uFF09\uFF0C13 \u4E2A\u5730\u533A\u91CC<b>\u4E9A\u6D32\u53EA\u6709\u9999\u6E2F</b>\u3002
+        \u514D\u8D39\u989D\u5EA6 <b>\u6BCF\u6708 2GB</b>\uFF0C\u843D\u5730\u662F\u673A\u623F IP\uFF08M247 \u4E3A\u4E3B\uFF09\uFF0C
+        13 \u4E2A\u5730\u533A\u91CC<b>\u4E9A\u6D32\u53EA\u6709\u9999\u6E2F</b>\u3002<br>
+        \u8D26\u53F7\u8D70 GitHub Actions \u5F00 \u2014\u2014 Worker \u81EA\u5DF1\u5F00\u4E0D\u51FA\u80FD\u7528\u7684\u53F7\uFF0C
+        Cloudflare \u7684\u51FA\u53E3 IP \u662F\u5171\u4EAB\u7684\uFF0C\u65E9\u88AB\u4EBA\u7528\u8FC7\uFF0C
+        Windscribe \u53EA\u4F1A\u53D1 1MB \u7684\u964D\u989D\u53F7\uFF0C\u90A3\u79CD\u53F7\u8FDE\u4EE3\u7406\u51ED\u636E\u90FD\u53D6\u4E0D\u5230\u3002<br>
+        \u8DD1\u4E00\u6B21 <b>\u53D6 Windscribe \u8D26\u53F7</b> \u6D41\u6C34\u7EBF\u5C31\u884C\uFF0C\u7528\u7684\u662F\u4E0A\u9762\u90A3\u4E2A\u63A8\u9001\u5730\u5740\u3002
+        \u989D\u5EA6\u7528\u5B8C\u4E86\u518D\u8DD1\u4E00\u6B21\u6362\u4E2A\u53F7\u3002
+        ${windInfo ? `<br><a href="#" onclick="go('/api/wind/clear');return false" style="color:var(--red)">\u6E05\u9664 Windscribe \u8D26\u53F7</a>` : ""}
       </div>
     </div>
 
@@ -1710,25 +1677,22 @@ async function getWarp(env, force = false) {
   await env.KV.put(K_WARP, JSON.stringify(w));
   return w;
 }
-async function getWind(env, force = false) {
-  const cached = force ? null : await env.KV.get(K_WIND, "json");
-  const w = await fetchWindscribe(cached);
-  if (!cached || cached.sessionAuthHash !== w.account.sessionAuthHash) {
-    await env.KV.put(K_WIND, JSON.stringify(w.account));
-  }
-  return w;
+async function getWind(env) {
+  const acc = await env.KV.get(K_WIND, "json");
+  if (!acc || !acc.sessionAuthHash) return null;
+  return await fetchWindscribe(acc);
 }
-async function rebuild(env, { forceWarp = false, forceWind = false } = {}) {
+async function rebuild(env, { forceWarp = false } = {}) {
   const warp = await getWarp(env, forceWarp);
   const opera = await fetchOpera();
   let proton = null;
   const pc = await env.KV.get(K_PROTON, "json");
   if (pc && (!pc.expiresAt || pc.expiresAt * 1e3 > Date.now())) proton = pc;
-  let wind = null;
+  let wind = null, windErr = null;
   try {
-    wind = await getWind(env, forceWind);
+    wind = await getWind(env);
   } catch (e) {
-    wind = null;
+    windErr = e.message;
   }
   const { yaml, entries, landings, combos, proton: pn, wind: wn } = buildConfig(warp, opera, proton, wind);
   const now = Date.now();
@@ -1738,6 +1702,7 @@ async function rebuild(env, { forceWarp = false, forceWind = false } = {}) {
     stats: { entries, landings, combos, proton: pn || 0, wind: wn || 0 },
     protonExpiresAt: proton ? proton.expiresAt : null,
     wind: wind ? { userId: wind.account.userId, servers: wn || 0 } : null,
+    windErr,
     warp: {
       deviceId: warp.deviceId,
       ipv4: warp.ipv4,
@@ -1833,9 +1798,33 @@ var index_default = {
     }
     if (path.startsWith("/push/") && req.method === "POST") {
       const tk = await env.KV.get(K_PUSH);
-      const got = path.slice(6);
+      const rest = path.slice(6);
+      const slash = rest.indexOf("/");
+      const got = slash < 0 ? rest : rest.slice(0, slash);
+      const kind = slash < 0 ? "proton" : rest.slice(slash + 1);
       if (!tk || !got || !safeEqual(got, tk)) return notFound();
       const body = await req.text();
+      if (kind === "wind") {
+        let acc;
+        try {
+          acc = JSON.parse(body);
+        } catch {
+          return json({ ok: false, error: "\u4E0D\u662F\u5408\u6CD5\u7684 JSON" }, 400);
+        }
+        if (!acc || !acc.sessionAuthHash || !acc.locHash) {
+          return json({ ok: false, error: "\u7F3A sessionAuthHash \u6216 locHash" }, 400);
+        }
+        if (acc.status !== void 0 && acc.status !== 1) {
+          return json({ ok: false, error: `\u8D26\u53F7 status=${acc.status}\uFF0C\u662F\u88AB\u964D\u989D\u7684\u53F7\uFF0C\u6CA1\u6CD5\u7528` }, 400);
+        }
+        await env.KV.put(K_WIND, JSON.stringify(acc));
+        try {
+          const st = await rebuild(env);
+          return json({ ok: true, msg: `\u5DF2\u5199\u5165 Windscribe \u8D26\u53F7\uFF0C${st.stats.wind} \u53F0\u843D\u5730` });
+        } catch (e) {
+          return json({ ok: true, msg: "\u8D26\u53F7\u5DF2\u5199\u5165\uFF0C\u4F46\u91CD\u5EFA\u914D\u7F6E\u5931\u8D25\uFF1A" + e.message });
+        }
+      }
       let parsed;
       try {
         parsed = parseBlob(body);
@@ -1973,16 +1962,13 @@ var index_default = {
         return json({ ok: false, error: e.message }, 500);
       }
     }
-    if (path === "/api/reset-wind" && req.method === "POST") {
+    if (path === "/api/wind/clear" && req.method === "POST") {
+      await env.KV.delete(K_WIND);
       try {
-        const s = await rebuild(env, { forceWind: true });
-        if (!s.wind) {
-          return json({ ok: false, error: "\u5F00\u6237\u6CA1\u6210\u529F\uFF0C\u591A\u534A\u662F\u88AB\u9650\u901F\u4E86\uFF0C\u8FC7\u51E0\u5206\u949F\u518D\u8BD5" }, 500);
-        }
-        return json({ ok: true, msg: `\u5DF2\u6362\u65B0\u8D26\u53F7\uFF0C${s.wind.servers} \u53F0\u843D\u5730` });
-      } catch (e) {
-        return json({ ok: false, error: e.message }, 500);
+        await rebuild(env);
+      } catch {
       }
+      return json({ ok: true, msg: "\u5DF2\u6E05\u9664\uFF0C\u91CD\u8DD1\u4E00\u6B21\u6D41\u6C34\u7EBF\u62FF\u65B0\u8D26\u53F7" });
     }
     return notFound();
   }

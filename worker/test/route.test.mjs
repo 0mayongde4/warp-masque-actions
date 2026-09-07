@@ -274,9 +274,60 @@ t("新密码能登上",
   const noacc = await (await worker.fetch(req("/", { headers: { cookie: c5 } }), env)).text();
   t("没账号显示未启用", noacc.includes("未启用"));
 
-  t("换账号要登录", (await worker.fetch(post("/api/reset-wind", {}), env)).status === 404);
-  t("换账号只认 POST",
-    (await worker.fetch(req("/api/reset-wind", { headers: { cookie: c5 } }), env)).status === 404);
+  t("清除账号要登录", (await worker.fetch(post("/api/wind/clear", {}), env)).status === 404);
+  t("清除账号只认 POST",
+    (await worker.fetch(req("/api/wind/clear", { headers: { cookie: c5 } }), env)).status === 404);
+}
+
+// ---- Windscribe 账号由流水线推送 ----
+{
+  reset();
+  await worker.fetch(post("/api/setup", { password: PW, confirm: PW }), env);
+  const c6 = (await worker.fetch(post("/login", { password: PW }), env))
+    .headers.get("set-cookie").split(";")[0];
+  const a6 = { cookie: c6 };
+  const tk = (await (await worker.fetch(post("/api/proton/token", {}, a6), env)).json()).token;
+  const raw = (p, body) => new Request(`https://x.dev${p}`, {
+    method: "POST", headers: { "cf-connecting-ip": "9.9.9.9" }, body });
+
+  const good = JSON.stringify({
+    userId: "u1", sessionAuthHash: "sah", locHash: "lh",
+    status: 1, trafficMax: 2147483648,
+  });
+
+  t("错令牌推 wind 是 404",
+    (await worker.fetch(raw("/push/wrong/wind", good), env)).status === 404);
+  t("坏 JSON 被拒",
+    (await worker.fetch(raw(`/push/${tk}/wind`, "{oops"), env)).status === 400);
+  t("缺字段被拒",
+    (await worker.fetch(raw(`/push/${tk}/wind`, '{"userId":"x"}'), env)).status === 400);
+
+  // 降额账号必须挡住 —— status=2 的号连代理凭据都取不到
+  const dud = JSON.stringify({
+    userId: "u2", sessionAuthHash: "s", locHash: "l",
+    status: 2, trafficMax: 1048576,
+  });
+  const dr = await worker.fetch(raw(`/push/${tk}/wind`, dud), env);
+  t("降额账号被拒", dr.status === 400 && (await dr.json()).error.includes("status=2"));
+  t("降额账号没落 KV", !kv.get("wind:account"));
+
+  // 正常账号：rebuild 会联网失败，但账号本身应已写入
+  const okr = await worker.fetch(raw(`/push/${tk}/wind`, good), env);
+  t("正常账号被接受", okr.status === 200);
+  t("账号已落 KV", JSON.parse(kv.get("wind:account") || "{}").userId === "u1");
+
+  // 同一个令牌，不带后缀还是走 Proton
+  const blob = btoa(JSON.stringify({
+    v: 1, privateKey: "K", expiresAt: Math.floor(Date.now() / 1000) + 604800,
+    servers: [{ name: "JP1", ip: "1.1.1.1", port: 51820, pub: "P" }] }));
+  await worker.fetch(raw(`/push/${tk}`, blob), env);
+  t("同一令牌不带后缀走 Proton", !!kv.get("proton:cred"));
+  t("两种凭据互不覆盖", !!kv.get("wind:account") && !!kv.get("proton:cred"));
+
+  // 清除
+  await worker.fetch(post("/api/wind/clear", {}, a6), env);
+  t("能清除 Windscribe 账号", !kv.get("wind:account"));
+  t("清除 wind 不动 Proton", !!kv.get("proton:cred"));
 }
 
 console.log(`\n通过 ${pass} 失败 ${fail}`);

@@ -435,17 +435,31 @@ Proton 的证书最长 7 天，`Duration` 写再长也封顶（实测 43200 min�
 
 不配这部分也不影响，其他线路照常工作。
 
-### Windscribe 落地
-
-这条不用配，Worker 自己会开户。
+### Windscribe 落地（可选）
 
 Windscribe 的浏览器扩展用的是标准 HTTPS 代理，和 Opera 同一个形态，
-所以能直接写成静态节点挂在 MASQUE 后面。它的认证只有一行
-`md5(固定secret + 时间戳)`，没有 SRP 也没有签名校验，
-整套流程在 Worker 里就能跑完，不用像 Proton 那样绕流水线。
+所以能直接写成静态节点挂在 MASQUE 后面。
 
 注册不需要邮箱，`POST /Users` 给个随机用户名密码就返回 session。
 免费额度**每月 2GB**（官网说的 10GB 要验证邮箱，匿名号拿不到）。
+
+**为什么开户要走流水线**
+
+它的认证只有一行 `md5(固定secret + 时间戳)`，本来在 Worker 里就能跑完。
+但**开户和出口 IP 强相关**：一个 IP 开过号之后再开，拿到的是
+`status=2` 的降额账号（`traffic_max` 只有 1MB），而这种账号连
+`/ServerCredentials` 都取不到：
+
+```
+400  errorCode 1700
+     "User unable to generate credentials. status = 2"
+```
+
+也就是说降额号完全不可用，不是"额度小一点"的问题。
+
+Cloudflare Worker 的出口 IP 是整个平台共享的，早被别人拿去开过号，
+所以 Worker 里开不出能用的账号。开户放到 GitHub Actions 上做，
+runner 的 IP 干净。
 
 13 个地区，62 台落地：
 
@@ -456,16 +470,24 @@ Windscribe 的浏览器扩展用的是标准 HTTPS 代理，和 Opera 同一个�
 
 落地是机房 IP，M247 为主。
 
+**配置步骤**
+
+和 Proton 共用同一个推送地址，不用再加 secret：
+
+1. 管理页「Proton 落地」那里生成推送地址，配进 `WORKER_PUSH_URL`
+2. 跑一次 `取 Windscribe 账号` 流水线
+
+流水线会自己在地址末尾加 `/wind`。它开完号会先验一次能不能取到代理凭据，
+拿到降额号就直接失败退出，不会把不能用的号推给 Worker。
+
 **流量用完了怎么办**
 
-管理页「Windscribe 落地」区块能看到本月用了多少。用完点`换 Windscribe 账号`
-重新开一个就行。
+管理页「Windscribe 落地」区块能看到本月用了多少。用完重跑一次流水线换个号。
 
-别连着换。同一个出口 IP 短时间开三个号，第三个会被降到 1MB 且
-`status=2`，这时候 Worker 会拒绝用它、当作没有这条线路处理。
-等几分钟再试。
+偶尔会碰上 runner 的 IP 被别人用过，这时流水线会报
+`拿到的是降额账号 status=2`，重跑一次换台机器就行。
 
-账号存在 KV 里复用，正常情况下不会每次重建配置都开新号。
+流水线也配了每月 1 号自动跑一次，对上 Windscribe 的月度重置。
 
 ### 跑测试
 

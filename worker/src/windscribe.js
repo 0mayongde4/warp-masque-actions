@@ -6,8 +6,13 @@
 // 注册不要邮箱：POST /Users 给个用户名密码就返回 session_auth_hash。
 // 免费额度 2GB/月（官网说的 10GB 要验证邮箱，这里拿不到）。
 //
-// 坑：同一个出口 IP 连着开户会被降额 —— 第三个号直接给 1MB 且 status=2。
-// 所以账号必须复用，别每次重建都开新的。
+// 坑：开户和出口 IP 强相关。同一个 IP 开过号之后再开，会拿到
+// status=2 的降额账号（traffic_max=1MB），而且那种号连 /ServerCredentials
+// 都取不到（400 errorCode 1700），等于完全不可用。
+//
+// Cloudflare Worker 的出口 IP 是全平台共享的，早被人用过，所以
+// **Worker 里开不出可用的号**。registerWindscribe 只在 GitHub Actions
+// 的 runner 上跑（scripts/gen_wind.py），Worker 这边只消费账号。
 
 import { md5Hex } from "./md5.js";
 
@@ -145,12 +150,18 @@ export async function fetchServers(acc) {
   return out;
 }
 
-/** 一次拿齐：账号复用，凭据和服务器列表每次重取。 */
+/** 一次拿齐：账号必须由外部给（流水线推来的），这里只取凭据和服务器列表。
+ *
+ * 不在这里开户 —— Worker 的出口 IP 是 Cloudflare 共享的，
+ * Windscribe 只会发 status=2 的降额号，那种号取不到代理凭据。
+ * 开户在 scripts/gen_wind.py 里做，跑在 GitHub runner 上。
+ */
 export async function fetchWindscribe(account) {
-  const acc = account && account.sessionAuthHash
-    ? account
-    : await registerWindscribe();
-  const cred = await fetchCredentials(acc);
-  const servers = await fetchServers(acc);
-  return { account: acc, ...cred, servers };
+  if (!account || !account.sessionAuthHash) {
+    throw new Error("没有 Windscribe 账号，跑一次流水线推一个过来");
+  }
+  const [cred, servers] = await Promise.all([
+    fetchCredentials(account), fetchServers(account),
+  ]);
+  return { account, ...cred, servers };
 }
